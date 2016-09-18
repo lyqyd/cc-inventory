@@ -1,0 +1,183 @@
+local master
+local keepAliveTimer
+local project = {}
+local loc, buildLoc
+
+do
+	--initial ID grab of master computer
+	turtle.turnLeft()
+	master = peripheral.call("front", "getID")
+	turtle.turnRight()
+end
+
+if not master then
+	print("Not in expected location!")
+	return
+end
+
+if not location then if shell.resolveProgram("location") then os.loadAPI(shell.resolveProgram("location")) elseif fs.exists("usr/apis/location") then os.loadAPI("usr/apis/location") else error("Could not load location API!") end end
+
+peripheral.find("modem", function(name) rednet.open(name) end)
+
+local function waitForMaster()
+	print("Attempting to connect to backend. ("..tostring(master)..")")
+	rednet.send(master, {event = "construction_online"}, "lyq-inv")
+	keepAliveTimer = os.startTimer(7)
+end
+
+waitForMaster()
+
+if fs.exists("/etc/projects") and fs.isDir("/etc/projects") then
+	projectDir = "/etc/projects"
+elseif fs.getDir and fs.exists(fs.combine(fs.getDir(shell.getRunningProgram()), "projects")) and fs.isDir(fs.combine(fs.getDir(shell.getRunningProgram()), "projects")) then
+	projectDir = fs.combine(fs.getDir(shell.getRunningProgram()), "projects")
+elseif fs.exists("/projects") and fs.isDir("/projects") then
+	projectDir = "/projects"
+end
+
+
+
+if projectDir then
+	local file = fs.combine(projectDir, "storage-layer")
+	local usefulEnv = {shell = shell}
+	setmetatable(usefulEnv, {__index = _G})
+	local env = {}
+	setmetatable(env, {__index = usefulEnv})
+	local fn, err = loadfile(file)
+	if fn then
+		setfenv(fn, env)
+		fn()
+		--copy into project table
+		for k, v in pairs(env) do
+			project[k] = v
+		end
+	end
+else
+	print("Could not find project folder!")
+	return
+end
+
+local function isSlotReady(slot)
+	if project and project.requirements.slots then
+		local slotReq = project.requirements.slots[slot]
+		if slotReq.readyFunction then
+			return slotReq.readyFunction()
+		elseif slotReq.exactCount then
+			return slotReq.minCount == slotReq.maxCount and slotReq.minCount == turtle.getItemCount(slot)
+		else
+			return turtle.getItemCount(slot) >= slotReq.minCount
+		end
+	else
+		return false
+	end
+end
+
+local function areAllSlotsReady()
+	if project and project.requirements.slots then
+		for i = 1, #project.requirements.slots do
+			if not isSlotReady(i) then return false end
+		end
+		return true
+	else
+		return false
+	end
+end
+
+local function areLocationsReady()
+	if project and project.requirements.locations then
+		if loc and loc.x and loc.y and loc.z and loc.y > 0 and buildLoc and buildLoc.x and buildLoc.y and buildLoc.z and buildLoc.y > 0 then
+			return true
+		else
+			return false
+		end
+	else
+		return true
+	end
+end
+
+local function isFuelSufficient()
+	if project and project.requirements.fuel then
+		local fuelCost = project.requirements.fuel
+		if type(project.requirements.fuel) == "function" then
+			local env = constructEnv()
+			setfenv(project.requirements.fuel, env)
+			fuelCost = project.requirements.fuel()
+		end
+		local otherRequirements = true
+		if project and project.requirements.other and type(project.requirements.other) == "function" then
+			otherRequirements = project.requirements.other()
+		end
+		return turtle.getFuelLevel() >= fuelCost and otherRequirements
+	else
+		return false
+	end
+end
+
+local function isReady()
+	return project and areAllSlotsReady() and areLocationsReady() and isFuelSufficient()
+end
+
+local function constructEnv()
+	local env = {requirements = project.requirements, shell = shell}
+	setmetatable(env, {__index = _G})
+	if env.requirements.locations then
+		env.requirements.locations.start = loc
+		env.requirements.locations.setup = buildLoc
+	end
+	return env
+end
+
+local function communicate()
+	while true do
+		local event = {os.pullEventRaw()}
+		if event[1] == "rednet_message" and event[4] == "lyq-inv" then
+			if event[2] == master then
+				if event[3].event == "master_online" then
+					print("Connected to backend. ("..tostring(event[2])..")")
+					keepAliveTimer = os.startTimer(7)
+				elseif event[3].event == "master_offline" then
+					print("Backend went offline.")
+					waitForMaster()
+				elseif event[3].event == "keepalive_ping" then
+					rednet.send(master, {event = "keepalive_pong"}, "lyq-inv")
+					keepAliveTimer = os.startTimer(7)
+				end
+			end
+		elseif event[1] == "timer" and event[2] == keepAliveTimer then
+			print("Backend timed out.")
+			waitForMaster()
+		elseif event[1] == "terminate" then
+			if master then rednet.send(master, {event = "construction_offline"}, "lyq-inv") end
+			print("Stopping")
+			return
+		end
+	end
+end
+
+local function construct()
+	while true do
+		local event = {os.pullEventRaw()}
+		if event[1] == "rednet_message" and event[4] == "lyq-inv" then
+			if event[2] == master then
+				if event[3].event == "build_layer" then
+					local origin, layer = event[3].origin, event[3] .layer
+					project.requirements.locations.start = location.new(origin.x, origin.y, origin.z, origin.h)
+					project.requirements.locations.setup = location.new(layer.x, layer.y, layer.z, layer.h)
+					--do the thing!
+					if isReady() then
+						local details = turtle.getItemDetail(1)
+						local storageBlock = details and (details.damage > 0 and details.name.."-"..details.damage or details.name)
+						setfenv(project.instructions, constructEnv())
+						project.instructions()
+						--then tell master we did it:
+						rednet.send(master, {event = "layer_complete", block = storageBlock}, "lyq-inv")
+					else
+						--figure out what isn't ready and fix it.
+					end
+				end
+			end
+		end
+	end
+end
+
+parallel.waitForAny(communicate, construct)

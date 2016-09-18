@@ -1,0 +1,285 @@
+--master computer
+--this program oversees the storage and retrieval of items in the storage system.
+
+--initial configuration defaults
+local config = {
+	--master configuration file
+	--in a north-facing setup (master north of service holes), rows are east-west and columns are north-south.
+	--facing is determined by which direction the master computer is from the service holes.
+	facing = 1,
+	layers = 1,
+	rows = 6,
+	columns = 6,
+	layout = {
+		--layout coordinates start with 1, 1 in the upper-left.
+		rows = {1, 3, 5, 7, 9, 11},
+		layers = {
+			--column coordinates.
+			{1, 3, 5, 7, 9, 11},
+			{2, 4, 6 ,8, 10, 12},
+		},
+		shafts = {
+			--row coordinate first.
+			{6, 5},
+			{6, 7},
+		},
+		bases = {
+			--bases along the outer walls for the item i/o interfaces.
+			--row coordinate first.
+			{1, 6},
+			{7, 12},
+			{12, 6},
+			{7, 1},
+		},
+	},
+	retrievalFlightDelay = 1,
+	intakeFlightDelay = 0.4,
+	storageBlocks = {
+		{
+			name = "minecraft:chest",
+			slots = 27,
+			slotSize = 64,
+		},
+	},
+	databasePath = "/storagedata",
+}
+
+if not os.loadAPI("configuration") then error("Could not load configuration API!") end
+if fs.exists("master.conf") then
+	config = configuration.load("master.conf")
+else
+	--initial setup
+	print("Initial Setup for Master Storage Controller")
+	while not os.getComputerLabel() do
+		print("Please provide a label for this computer.")
+		write("> ")
+		local label = read()
+		if #label >= 1 then
+			os.setComputerLabel(label)
+			break
+		else
+			print("A label is required!")
+		end
+	end
+	while true do
+		print("Which direction does this storage station face?")
+		print("Determine the direction by standing at the center torch and looking toward the master controller computer (this computer).")
+		print("Enter 1 - 4, corresponding to the correct direction:")
+		print("1. north      2. east")
+		print("3. south      4. west")
+		write("> ") 
+		local direction = tonumber(read())
+		if direction and direction == math.floor(direction) and direction >= 1 and direction <= 4 then
+			config.facing = direction
+			break
+		else
+			print("A valid direction is required!")
+		end
+	end
+	configuration.save("master.conf", config)
+end
+if not os.loadAPI("storage") then error("Could not load storage API!") end
+storage.initialize(config)
+
+peripheral.find("modem", function(name) rednet.open(name) end)
+
+if os.getComputerLabel() then
+	rednet.host("lyq-inv", os.getComputerLabel())
+else
+	print("You must label this computer first.")
+	return
+end
+
+local itemsStored = 0
+local storeControl, sortControl, construction
+local routeQueue = {}
+--retrieve and intake are flight queues.
+local retrieveQueue, intakeQueue, outputQueue = {}, {}, {{}, {}, {}, {}}
+local flightQueueTimer = os.startTimer(0)
+
+local direction = {
+	--facing north
+	{"north", "east", "south", "west"},
+	--facing east
+	{"east", "south", "west", "north"},
+	--facing south
+	{"south", "west", "north", "east"},
+	--facing west
+	{"west", "north", "east", "south"},
+}
+
+local function queueFlight(route, queue)
+	table.insert(queue, route)
+	if not queue.timer then queue.timer = os.startTimer(0) end
+end
+
+local function checkRemainingSpace()
+	if itemsStored <= 30 then return end
+	if storage.getSlotsRemaining() < 120 then
+		if construction then
+			rednet.send(construction, {event = "build_layer", origin = {x = 0, y = config.layers + 7, z = 0, h = 1}, layer = {x = 0, y = 1, z = 0, h = 1}}, "lyq-inv")
+		end
+	end
+	itemsStored = 0
+end
+
+local keepAliveTimer, keepAliveStatus = os.startTimer(5), {false, false, false}
+
+while true do
+	local event = {os.pullEventRaw()}
+	if event[1] == "rednet_message" then
+		if event[4] == "lyq-inv" then
+			local message = event[3]
+			if message.event == "storage_online" then
+				if (storeControl == nil or storeControl == event[2]) then
+					storeControl = event[2]
+					keepAliveStatus[1] = true
+					print("Storage controller connected. ("..tostring(storeControl)..")")
+					rednet.send(storeControl, {event = "master_online"}, "lyq-inv")
+				else
+					print("Multiple storage controllers found!")
+					return
+				end
+			elseif message.event == "sorting_online" then
+				if (sortControl == nil or sortControl == event[2]) then
+					sortControl = event[2]
+					keepAliveStatus[2] = true
+					print("Sorting controller connected. ("..tostring(sortControl)..")")
+					rednet.send(sortControl, {event = "master_online"}, "lyq-inv")
+				else
+					print("Multiple sorting controllers found!")
+					return
+				end
+			elseif message.event == "construction_online" then
+				if (construction == nil or construction == event[2]) then
+					construction = event[2]
+					keepAliveStatus[3] = true
+					print("Construction turtle connected. ("..tostring(construction)..")")
+					rednet.send(construction, {event = "master_online"}, "lyq-inv")
+				else
+					print("Multiple construction turtles found!")
+					return
+				end
+			elseif message.event == "storage_offline" then
+				storeControl = nil
+				print("Storage controller offline.")
+			elseif message.event == "sorting_offline" then
+				sortControl = nil
+				print("Sorting controller offline.")
+			elseif message.event == "construction_offline" then
+				construction = nil
+				print("Construction turtle offline.")
+			elseif message.event == "keepalive_pong" then
+				if event[2] == storeControl then
+					keepAliveStatus[1] = true
+				elseif event[2] == sortControl then
+					keepAliveStatus[2] = true
+				elseif event[2] == construction then
+					keepAliveStatus[3] = true
+				end
+			elseif message.event == "store" and event[2] == storeControl then
+				print("Storing "..tostring(message.info.count).." of "..message.info.name.."-"..message.info.damage)
+				storage.store(message.info, function(route) rednet.send(storeControl, {event = "fly_route", route = route}, "lyq-inv") end)
+				itemsStored = itemsStored + 1
+				checkRemainingSpace()
+			elseif message.event == "retrieve" and event[2] == storeControl then
+				print("Retrieved "..tostring(message.info.count).." of "..message.info.name.."-"..message.info.damage)
+				local found = false
+				for j = 1, math.max(#outputQueue[1], #outputQueue[2], #outputQueue[3], #outputQueue[4]) do
+					for i = 1, 4 do
+						if outputQueue[i][j] and outputQueue[i][j].name == message.info.name and outputQueue[i][j].damage == message.info.damage and outputQueue[i][j].count >= message.info.count then
+							outputQueue[i][j].count = outputQueue[i][j].count - message.info.count
+							local route = storage.createOutputRoute(i)
+							table.insert(route, 1, i)
+							rednet.send(sortControl, {event = "fly_route", route = route}, "lyq-inv")
+							if outputQueue[i][j].count == 0 then
+								local info = outputQueue[i][j]
+								table.remove(outputQueue[i], j)
+								rednet.send(info.requester, {type = "item_ready", name = info.name, damage = info.damage, count = info.count, side = i}, "lyq-base-inv")
+							end
+							found = true
+							break
+						end
+					end
+					if found then break end
+				end
+			elseif message.event == "item_arrived" and event[2] == sortControl then
+				print("Received "..tostring(message.info.count).." of "..message.info.name.."-"..message.info.damage)
+				local route = storage.createIntakeRoute(message.side)
+				table.insert(route, 1, message.side)
+				queueFlight(route, intakeQueue)
+			elseif message.event == "layer_complete" then
+				config.layers = config.layers + 2
+				configuration.save("master.conf", config)
+				storage.addLayers(message.block, 2)
+			end
+		elseif event[4] == "lyq-base-inv" then
+			local message = event[3]
+			if message.type == "item_count" then
+				rednet.send(event[2], {type = "item_quantity", name = message.name, damage = message.damage, count = storage.getItemCount(message.name, message.damage)}, "lyq-base-inv")
+			elseif message.type == "all_items" then
+				rednet.send(event[2], {type = "all_items_info", info = storage.getAllItemCounts()}, "lyq-base-inv")
+			elseif message.type == "input_sides" then
+			elseif message.type == "output_sides" then
+			elseif message.type == "item_request" then
+				local itemData = {name = message.name, damage = message.damage, count = message.count, requester = event[2]}
+				table.insert(outputQueue[message.side], itemData)
+				print("Retrieving "..tostring(message.count).." of "..message.name.."-"..message.damage)
+				local success, count = storage.retrieve(itemData, function(route) queueFlight(route, retrieveQueue) end)
+				if not success then print("Couldn't retrieve "..count.." items.") end
+				-- sent with an item name, damage value, count, and output side to an inv-master to request that it make the items available on that side.
+			elseif message.type == "free_space" then
+				rednet.send(event[2], {type = "free_space_count", info = storage.getSpaceRemaining()}, "lyq-base-inv")
+			elseif message.type == "free_slots" then
+				rednet.send(event[2], {type = "free_slots_count", info = storage.getSlotsRemaining()}, "lyq-base-inv")
+			elseif message.type == "unused_layers" then
+			elseif message.type == "item_density" then
+				rednet.send(event[2], {type = "item_density_percent", info = storage.calculateItemDensity()}, "lyq-base-inv")
+			end
+		end
+	elseif event[1] == "timer" then
+		if event[2] == keepAliveTimer then
+			if storeControl and not keepAliveStatus[1] then
+				storeControl = nil
+				print("Storage controller timed out.")
+			end
+			if sortControl and not keepAliveStatus[2] then
+				sortControl = nil
+				print("Sorting controller timed out.")
+			end
+			if construction and not keepAliveStatus[3] then
+				construction = nil
+				print("Sorting controller timed out.")
+			end
+			if storeControl then rednet.send(storeControl, {event = "keepalive_ping"}, "lyq-inv") end
+			if sortControl then rednet.send(sortControl, {event = "keepalive_ping"}, "lyq-inv") end
+			if construction then rednet.send(construction, {event = "keepalive_ping"}, "lyq-inv") end
+			keepAliveStatus = {false, false, false}
+			keepAliveTimer = os.startTimer(5)
+		elseif event[2] == retrieveQueue.timer then
+			if storeControl then
+				rednet.send(storeControl, {event = "fly_route", route = table.remove(retrieveQueue, 1)}, "lyq-inv")
+			end
+			if #retrieveQueue > 0 then
+				retrieveQueue.timer = os.startTimer(config.retrievalFlightDelay)
+			else
+				retrieveQueue.timer = nil
+			end
+		elseif event[2] == intakeQueue.timer then
+			if storeControl then
+				rednet.send(sortControl, {event = "fly_route", route = table.remove(intakeQueue, 1)}, "lyq-inv")
+			end
+			if #intakeQueue > 0 then
+				intakeQueue.timer = os.startTimer(config.intakeFlightDelay)
+			else
+				intakeQueue.timer = nil
+			end
+		end
+	elseif event[1] == "terminate" then
+		rednet.unhost("lyq-inv")
+		if storeControl then rednet.send(storeControl, {event = "master_offline"}, "lyq-inv") end
+		if sortControl then rednet.send(sortControl, {event = "master_offline"}, "lyq-inv") end
+		print("Stopping")
+		return
+	end
+end

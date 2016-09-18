@@ -1,0 +1,623 @@
+--storage api
+
+local config = {
+	databasePath = "storagedata",
+	layers = 0,
+	rows = 0,
+	columns = 0,
+	storageBlocks = {
+		{
+			name = "minecraft:chest",
+			slots = 27,
+			slotSize = 64,
+		}
+	},
+	facing = 1,
+	layout = {},
+}
+
+local storageDatabase = {}
+
+--item lookup table, indexed by item name. Contains a table of tube ID, layer #, chest # triplets of which storage chests the item can be found in.
+local itemLookup = {}
+
+--item database table, intended to be fetched from master station.  Indexed by item name, contains general information about that item, like max stack size, as well as the ways the system can produce that item (crafting, etc.)
+local itemDatabase = {}
+
+--item processing queue, these are routes to fly, along with transaction IDs.
+local processingQueue = {}
+
+--item movement transactions, to allow read/write to occur all at once when the quad is dispatched.
+local openTransactions = {}
+
+local direction = {
+	--facing north
+	{"north", "east", "south", "west"},
+	--facing east
+	{"east", "south", "west", "north"},
+	--facing south
+	{"south", "west", "north", "east"},
+	--facing west
+	{"west", "north", "east", "south"},
+}
+
+local baseRotations = {
+	{1, 2, 3, 4},
+	{4, 1, 2, 3},
+	{3, 4, 1, 2},
+	{2, 3, 4, 1},
+}
+
+local storageInfo = {}
+for i, info in ipairs(config.storageBlocks) do
+	storageInfo[info.name] = info
+end
+
+local function prepareDatabase() 
+	--initial fill of storageDatabase dimensions
+	for i = 1, config.layers do
+		storageDatabase[i] = {}
+		for j = 1, config.rows do
+			storageDatabase[i][j] = {}
+			for k = 1, config.columns do
+				storageDatabase[i][j][k] = {storage = "none", slotSize = 0, slotCount = 1, {name = "empty", count = 0}}
+			end
+		end
+	end
+end
+
+--load storage database from disk.
+local function readStorageDatabase()
+	local handle = io.open(config.databasePath, "r")
+	if handle then
+		for line in handle:lines() do
+			if string.match(line, "^%d+,%d+,%d+;%d+ .*") then
+				local layer, row, column, count, name = string.match(line, "^(%d+),(%d+),(%d+);(%d+) (.*)")
+				if layer and row and column and count and name then
+					storageDatabase[tonumber(layer)][tonumber(row)][tonumber(column)] = {storage = config.storageBlocks[1].name, slotSize = config.storageBlocks[1].slotSize, slotCount = config.storageBlocks[1].slots, {name = name, count = tonumber(count)}}
+				end
+			elseif string.match(line, "^%d+,%d+,%d+;[%a%d%-]+:?[%a%d%-%^]+ ") then
+				local layer, row, column, storageName, contents = string.match(line, "^(%d+),(%d+),(%d+);([%a%d%-]+:?[%a%d%-%^]+) (.*)")
+				local stored = {storage = storageName, slotSize = storageInfo[storageName].slotSize, slotCount = storageInfo[storageName].slots}
+				for item, quantity in string.gmatch(contents, "([%a%d%-]+:?[%a%d%-%^]+),(%d+);") do
+					table.insert(stored, {name = item, count = tonumber(quantity)})
+				end
+				storageDatabase[tonumber(layer)][tonumber(row)][tonumber(column)] = stored
+			end
+		end
+		handle:close()
+	end
+end
+
+local function writeStorageDatabase()
+	local handle = io.open(config.databasePath, "w")
+	if handle then
+		for i = 1, #storageDatabase do
+			for j = 1, #storageDatabase[i] do
+				for k = 1, #storageDatabase[i][j] do
+					local entry = storageDatabase[i][j][k]
+					local str = tostring(i)..","..tostring(j)..","..tostring(k)..";"..tostring(entry.storage).." "
+					for i, info in ipairs(entry) do
+						str = str..tostring(info.name)..","..tostring(info.count)..";"
+					end
+					if #entry == 0 then str = str.."empty,0;" end
+					--trim excess empty slot designations from ends of lines.
+					while string.match(str, ";empty,0;$") do
+						str = string.match(str, "(.*;)empty,0;")
+					end
+					handle:write(str.."\n")
+				end
+			end
+		end
+		handle:close()
+	end
+end
+
+local function prepareLookupTable()
+	--assumes completely loaded and up to date storageDatabase.
+	for i = 1, #storageDatabase do
+		for j = 1, #storageDatabase[i] do
+			for k = 1, #storageDatabase[i][j] do
+				for slot = 1, #storageDatabase[i][j][k] do
+					if not itemLookup[storageDatabase[i][j][k][slot].name] then
+						itemLookup[storageDatabase[i][j][k][slot].name] = {}
+					end
+					table.insert(itemLookup[storageDatabase[i][j][k][slot].name], {i, j, k, slot})
+				end
+			end
+		end
+	end
+end
+
+function initialize(configuration)
+	for k, v in pairs(configuration) do
+		if config[k] then
+			config[k] = v
+		end
+	end
+	prepareDatabase()
+	readStorageDatabase()
+	writeStorageDatabase()
+	prepareLookupTable()
+end
+
+function transaction(layer, row, column, slot, name, delta)
+	storageDatabase[layer][row][column][slot].count = storageDatabase[layer][row][column][slot].count + delta
+	if storageDatabase[layer][row][column][slot].count > 0 then
+		storageDatabase[layer][row][column][slot].name = name
+	else
+		storageDatabase[layer][row][column][slot].name = "empty"
+	end
+	writeStorageDatabase()
+end
+
+function addLayers(storageBlock, count)
+	local found = false
+	for i = 1, #config.storageBlocks do
+		if config.storageBlocks[i] == storageBlock then
+			found = true
+			break
+		end
+	end
+	if count > 0 and found then
+		for i = #storageDatabase, #storageDatabase + count do
+			storageDatabase[i] = {}
+			for j = 1, config.rows do
+				storageDatabase[i][j] = {}
+				for k = 1, config.columns do
+					storageDatabase[i][j][k] = {storage = storageBlock, slotSize = storageInfo[storageBlock].slotSize, slotCount = storageInfo[storageBlock].slots, {name = "empty", count = 0}}
+				end
+			end
+		end
+		return true
+	end
+	return false
+end
+
+local function routeWithCoords(route, from, to, colFirst)
+	local firstFrom, firstTo, secondFrom, secondTo
+	local firstDirLess, firstDirMore, secondDirLess, secondDirMore
+	if colFirst then
+		firstFrom, secondFrom = from[2], from[1]
+		firstTo, secondTo = to[2], to[1]
+		firstDirLess, firstDirMore = 2, 4
+		secondDirLess, secondDirMore = 3, 1
+	else
+		firstFrom, secondFrom = from[1], from[2]
+		firstTo, secondTo = to[1], to[2]
+		firstDirLess, firstDirMore = 3, 1
+		secondDirLess, secondDirMore = 2, 4
+	end
+	--!! UNFINISHED !!
+end
+
+--NESW
+function createStorageRoute(layer, row, column, count)
+	local route = {}
+	route[#route + 1] = direction[config.facing][4]
+	route[#route + 1] = direction[config.facing][1]
+	route[#route + 1] = "suck "..tostring(count)
+	route[#route + 1] = direction[config.facing][1]
+	route[#route + 1] = "down "..tostring(layer + 5)
+	local rowCoord, colCoord
+	local layerMod = layer % #config.layout.layers
+	if layerMod == 0 then layerMod = #config.layout.layers end
+	colCoord = config.layout.layers[layerMod][column]
+	rowCoord = config.layout.rows[row]
+	local shaftRow, shaftCol = config.layout.shafts[1][1], config.layout.shafts[1][2]
+	if colCoord > shaftCol then
+		route[#route + 1] = direction[config.facing][2].." "..tostring(colCoord - shaftCol)
+	elseif colCoord < shaftCol then
+		route[#route + 1] = direction[config.facing][4].." "..tostring(shaftCol - colCoord)
+	end
+	if rowCoord > shaftRow then
+		route[#route + 1] = direction[config.facing][3].." "..tostring(rowCoord - shaftRow)
+	elseif rowCoord < shaftRow then
+		route[#route + 1] = direction[config.facing][1].." "..tostring(shaftRow - rowCoord)
+	end
+	route[#route + 1] = "drop "..tostring(count)
+	if rowCoord > shaftRow then
+		route[#route + 1] = direction[config.facing][1].." "..tostring(rowCoord - shaftRow)
+	elseif rowCoord < shaftRow then
+		route[#route + 1] = direction[config.facing][3].." "..tostring(shaftRow - rowCoord)
+	end
+	shaftCol = config.layout.shafts[2][2]
+	if colCoord > shaftCol then
+		route[#route + 1] = direction[config.facing][4].." "..tostring(colCoord - shaftCol)
+	elseif colCoord < shaftCol then
+		route[#route + 1] = direction[config.facing][2].." "..tostring(shaftCol - colCoord)
+	end
+	route[#route + 1] = "up "..tostring(layer + 5)
+	route[#route + 1] = direction[config.facing][3].." 2"
+	route[#route + 1] = direction[config.facing][4]
+	return route
+end
+
+function createRetrievalRoute(layer, row, column, count, data)
+	local route = {}
+	route[#route + 1] = "filter "..tostring(data.name).." "..tostring(data.damage)
+	route[#route + 1] = direction[config.facing][4]
+	route[#route + 1] = direction[config.facing][1].." 2"
+	route[#route + 1] = "down "..tostring(layer + 5)
+	local rowCoord, colCoord
+	local layerMod = layer % #config.layout.layers
+	if layerMod == 0 then layerMod = #config.layout.layers end
+	colCoord = config.layout.layers[layerMod][column]
+	rowCoord = config.layout.rows[row]
+	local shaftRow, shaftCol = config.layout.shafts[1][1], config.layout.shafts[1][2]
+	if colCoord > shaftCol then
+		route[#route + 1] = direction[config.facing][2].." "..tostring(colCoord - shaftCol)
+	elseif colCoord < shaftCol then
+		route[#route + 1] = direction[config.facing][4].." "..tostring(shaftCol - colCoord)
+	end
+	if rowCoord > shaftRow then
+		route[#route + 1] = direction[config.facing][3].." "..tostring(rowCoord - shaftRow)
+	elseif rowCoord < shaftRow then
+		route[#route + 1] = direction[config.facing][1].." "..tostring(shaftRow - rowCoord)
+	end
+	route[#route + 1] = "suck "..tostring(count)
+	if rowCoord > shaftRow then
+		route[#route + 1] = direction[config.facing][1].." "..tostring(rowCoord - shaftRow)
+	elseif rowCoord < shaftRow then
+		route[#route + 1] = direction[config.facing][3].." "..tostring(shaftRow - rowCoord)
+	end
+	shaftCol = config.layout.shafts[2][2]
+	if colCoord > shaftCol then
+		route[#route + 1] = direction[config.facing][4].." "..tostring(colCoord - shaftCol)
+	elseif colCoord < shaftCol then
+		route[#route + 1] = direction[config.facing][2].." "..tostring(shaftCol - colCoord)
+	end
+	route[#route + 1] = "up "..tostring(layer + 5)
+	route[#route + 1] = direction[config.facing][3]
+	route[#route + 1] = "drop "..tostring(count)
+	route[#route + 1] = direction[config.facing][3]
+	route[#route + 1] = direction[config.facing][4]
+	return route
+end
+
+function createIntakeRoute(side)
+	local route = {}
+	route[#route + 1] = direction[side][2]
+	route[#route + 1] = direction[side][1].." 2"
+	route[#route + 1] = "suck"
+	route[#route + 1] = direction[side][3].." 2"
+	route[#route + 1] = direction[side][4]
+	local baseRow, baseCol = config.layout.bases[baseRotations[config.facing][side]][1], config.layout.bases[baseRotations[config.facing][side]][2]
+	local inputRow, inputCol = config.layout.shafts[1][1] + 1, config.layout.shafts[1][2]
+	if baseCol > inputCol then
+		route[#route + 1] = direction[config.facing][4].." "..tostring(baseCol - inputCol)
+	elseif baseCol < inputCol then
+		route[#route + 1] = direction[config.facing][2].." "..tostring(inputCol - baseCol)
+	end
+	if baseRow > inputRow then
+		route[#route + 1] = direction[config.facing][1].." "..tostring(baseRow - inputRow)
+	elseif baseRow < inputRow then
+		route[#route + 1] = direction[config.facing][3].." "..tostring(inputRow - baseRow)
+	end
+	route[#route + 1] = "drop"
+	if baseRow > inputRow then
+		route[#route + 1] = direction[config.facing][3].." "..tostring(baseRow - inputRow)
+	elseif baseRow < inputRow then
+		route[#route + 1] = direction[config.facing][1].." "..tostring(inputRow - baseRow)
+	end
+	if baseCol > inputCol then
+		route[#route + 1] = direction[config.facing][2].." "..tostring(baseCol - inputCol)
+	elseif baseCol < inputCol then
+		route[#route + 1] = direction[config.facing][4].." "..tostring(inputCol - baseCol)
+	end
+	return route
+end
+
+function createOutputRoute(side)
+	local route = {}
+	local baseRow, baseCol = config.layout.bases[baseRotations[config.facing][side]][1], config.layout.bases[baseRotations[config.facing][side]][2]
+	local inputRow, inputCol = config.layout.shafts[2][1] + 1, config.layout.shafts[2][2]
+	if baseCol > inputCol then
+		route[#route + 1] = direction[config.facing][4].." "..tostring(baseCol - inputCol)
+	elseif baseCol < inputCol then
+		route[#route + 1] = direction[config.facing][2].." "..tostring(inputCol - baseCol)
+	end
+	if baseRow > inputRow then
+		route[#route + 1] = direction[config.facing][1].." "..tostring(baseRow - inputRow)
+	elseif baseRow < inputRow then
+		route[#route + 1] = direction[config.facing][3].." "..tostring(inputRow - baseRow)
+	end
+	route[#route + 1] = "suck"
+	if baseRow > inputRow then
+		route[#route + 1] = direction[config.facing][3].." "..tostring(baseRow - inputRow)
+	elseif baseRow < inputRow then
+		route[#route + 1] = direction[config.facing][1].." "..tostring(inputRow - baseRow)
+	end
+	if baseCol > inputCol then
+		route[#route + 1] = direction[config.facing][2].." "..tostring(baseCol - inputCol)
+	elseif baseCol < inputCol then
+		route[#route + 1] = direction[config.facing][4].." "..tostring(inputCol - baseCol)
+	end
+	route[#route + 1] = direction[side][4]
+	route[#route + 1] = direction[side][1].." 2"
+	route[#route + 1] = "drop"
+	route[#route + 1] = direction[side][3].." 2"
+	route[#route + 1] = direction[side][2]
+	return route
+end
+
+local function copy(tab)
+	local ret = {}
+	for k, v in pairs(tab) do
+		if type(v) == "table" then
+			ret[k] = copy(v)
+		else
+			ret[k] = v
+		end
+	end
+	return ret
+end
+
+function getItemsAt(layer, row, column)
+	return copy(storageDatabase[layer][row][column])
+end
+
+local function getCompoundName(data)
+	if itemDatabase[data.name] and itemDatabase[data.name].ignoreDamage then
+		return data.name
+	elseif data.damage and data.damage > 0 then
+		return data.name.."-"..tostring(data.damage)
+	else
+		return data.name
+	end
+end
+
+local function getStorageInfo(layer, row, column)
+	for i = 1, #config.storageBlocks do
+		if storageDatabase[layer][row][column].storage == config.storageBlocks[i].name then
+			return copy(config.storageBlocks[i])
+		end
+	end
+end
+
+function store(itemData, queue)
+	local name = getCompoundName(itemData)
+	local count = itemData.count
+	local route
+	if itemLookup[name] then
+		local slotList = {}
+		local loclist = {}
+		for k, v in ipairs(itemLookup[name]) do
+			local store = storageDatabase[v[1]][v[2]][v[3]][v[4]]
+			if store.name then
+				--database agrees that this is here.
+				local precedingEmpty = false
+				for i = v[4], 1, -1 do
+					if storageDatabase[v[1]][v[2]][v[3]][i].name == "empty" then
+						precedingEmpty = true
+						break
+					end
+				end
+				if not precedingEmpty then
+					--no empty slots prior to this slot in this chest, so it is reachable.
+					if not itemDatabase[itemData.name] then
+						itemDatabase[itemData.name] = {}
+						itemDatabase[itemData.name].maxStackSize = 64
+					end
+					local maxStoredSize
+					local storeInfo = getStorageInfo(v[1], v[2], v[3])
+					if storeInfo then maxStoredSize = storeInfo.slotSize end
+					if maxStoredSize and store.count < maxStoredSize then
+						local newSlot = true
+						for _, info in ipairs(slotList) do
+							if info.location[1] == v[1] and info.location[2] == v[2] and info.location[3] == v[3] then
+								newSlot = false
+								info.space = info.space + (maxStoredSize - store.count)
+								table.insert(info.slots, {v[4], maxStoredSize - store.count})
+								table.sort(info.slots)
+								break
+							end
+						end
+						if newSlot then
+							table.insert(slotList, {space = maxStoredSize - store.count, location = {v[1], v[2], v[3]}, slots = {{v[4], maxStoredSize - store.count}}})
+						end
+					end
+				end
+			end
+		end
+		table.sort(slotList, function(a, b) return a.space > b.space end)
+		for i = 1, #slotList do
+			local flightQuantity = 0
+			local loc
+			for j = 1, #slotList[i].slots do
+				local moveQuantity = math.min(slotList[i].slots[j][2], count)
+				loc = slotList[i].location
+				storage.transaction(loc[1], loc[2], loc[3], slotList[i].slots[j][1], name, moveQuantity)
+				flightQuantity = flightQuantity + moveQuantity
+				count = count - moveQuantity
+				if count == 0 then break end
+			end
+			route = createStorageRoute(loc[1], loc[2], loc[3], flightQuantity)
+			queue(route)
+			if count == 0 then break end
+		end
+	end
+	if count > 0 then
+		--item wasn't yet in db, or existing slots didn't have enough room.  Allocate new slot/chest.
+		for i = 1, #storageDatabase do
+			for j = 1, #storageDatabase[i] do
+				for k = 1, #storageDatabase[i][j] do
+					local storeInfo = getStorageInfo(i, j, k)
+					for slot = 1, storeInfo.slots or #storageDatabase[i][j][k] do
+						if not storageDatabase[i][j][k][slot] then storageDatabase[i][j][k][slot] = {name = "empty", count = 0} end
+						if storageDatabase[i][j][k][slot].name == "empty" then
+							if not itemLookup[name] then
+								itemLookup[name] = {}
+							end
+							table.insert(itemLookup[name], {i, j, k, slot})
+							transaction(i, j, k, slot, name, count)
+							route = createStorageRoute(i, j, k, count)
+							queue(route)
+							count = 0
+							break
+						end
+					end
+					if count == 0 then break end
+				end
+				if count == 0 then break end
+			end
+			if count == 0 then break end
+		end
+	end
+	if count > 0 then
+		return false
+	else
+		return true
+	end
+end
+
+function retrieve(itemData, queue)
+	local name = getCompoundName(itemData)
+	local count = itemData.count
+	local route
+	local storageInformation = {}
+	local slots = {}
+	local lookup = itemLookup[name]
+	for i, info in ipairs(lookup) do
+		if not storageInformation[info[1]] or not storageInformation[info[1]][info[2]] or not storageInformation[info[1]][info[2]][info[3]] then
+			storageInformation[info[1]] = storageInformation[info[1]] or {}
+			storageInformation[info[1]][info[2]] = storageInformation[info[1]][info[2]] or {}
+			storageInformation[info[1]][info[2]][info[3]] = storageInformation[info[1]][info[2]][info[3]] or {}
+			storageInformation[info[1]][info[2]][info[3]] = getStorageInfo(info[1], info[2], info[3])
+		end
+		local storeInfo = storageInformation[info[1]][info[2]][info[3]]
+		slots[storeInfo.slotSize] = slots[storeInfo.slotSize] or {}
+		table.insert(slots[storeInfo.slotSize], info)
+	end
+
+	local sortedSlots = {}
+	for size, list in pairs(slots) do
+		table.sort(list, function(a, b) return storageDatabase[a[1]][a[2]][a[3]][a[4]].count < storageDatabase[b[1]][b[2]][b[3]][b[4]].count end)
+		table.insert(sortedSlots, {size = size, locations = list})
+	end
+	table.sort(sortedSlots, function(a, b) return a.size < b.size end)
+
+	for i, info in ipairs(sortedSlots) do
+		for j, l in ipairs(info.locations) do
+			local x, y, z = l[1], l[2], l[3]
+			local slots = getItemsAt(x, y, z)
+			for s = 1, #slots do
+				if storageDatabase[x][y][z][s] and storageDatabase[x][y][z][s].name == name then
+					local moveQuantity = math.min(storageDatabase[x][y][z][s].count, count)
+					transaction(x, y, z, s, name, moveQuantity * -1)
+					route = createRetrievalRoute(x, y, z, moveQuantity, itemData)
+					queue(route)
+					count = count - moveQuantity
+					if count == 0 then break end
+				end
+			end
+			if count == 0 then break end
+		end
+		if count == 0 then break end
+	end
+
+	if count > 0 then
+		return false, count
+	else
+		return true
+	end
+end
+
+function getItemCount(name, damage)
+	local itemName = getCompoundName({name = name, damage = damage})
+	local count = 0
+	for i = 1, #storageDatabase do
+		for j = 1, #storageDatabase[i] do
+			for k = 1, #storageDatabase[i][j] do
+				for slot = 1, #storageDatabase[i][j][k] do
+					local info = storageDatabase[i][j][k][slot]
+					if info.name == itemName then
+						count = count + 1
+					end
+				end
+			end
+		end
+	end
+	return count
+end
+
+function getAllItemCounts()
+	local items = {}
+	for i = 1, #storageDatabase do
+		for j = 1, #storageDatabase[i] do
+			for k = 1, #storageDatabase[i][j] do
+				for slot = 1, #storageDatabase[i][j][k] do
+					local info = storageDatabase[i][j][k][slot]
+					local name = string.match(info.name, "([%a%d%-]+:?[%a%d%-]+)%^?")
+					local damage = string.match(info.name, "%^(%d+)$")
+					if damage then damage = tonumber(damage) else damage = 0 end
+					if not items[info.name] then items[info.name] = {[damage] = 0} end
+					items[info.name][damage] = items[info.name][damage] + info.count
+				end
+			end
+		end
+	end
+	return items
+end
+
+function calculateItemDensity()
+	local occupied, total = 0, 0
+	for i, row in ipairs(storageDatabase) do
+		for j, column in ipairs(row) do
+			for k, chest in ipairs(column) do
+				local slotSize = chest.slotSize
+				for l = 1, chest.slotCount do
+					local info = chest[l]
+					if info and info.count > 0 then
+						total = total + slotSize
+						occupied = occupied + info.count
+					end
+				end
+			end
+		end
+	end
+	if total > 0 then
+		return occupied / total
+	else
+		return 0
+	end
+end
+
+function getSpaceRemaining()
+	local space = 0
+	for i, row in ipairs(storageDatabase) do
+		for j, column in ipairs(row) do
+			for k, chest in ipairs(column) do
+				local slotSize = chest.slotSize
+				for l = 1, chest.slotCount do
+					if chest[l] then
+						space = space + (slotSize - chest[l].count)
+					else
+						space = space + slotSize
+					end
+				end
+			end
+		end
+	end
+	return space
+end
+
+function getSlotsRemaining()
+	local slots = 0
+	for i, row in ipairs(storageDatabase) do
+		for j, column in ipairs(row) do
+			for k, chest in ipairs(column) do
+				for l = 1, chest.slotCount do
+					if not chest[l] or chest[l].count == 0 then
+						slots = slots + 1
+					end
+				end
+			end
+		end
+	end
+	return slots
+end
+
+function getDatabase()
+	return copy(storageDatabase)
+end
