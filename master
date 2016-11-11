@@ -41,6 +41,7 @@ local config = {
 			slotSize = 64,
 		},
 	},
+	baseCode = "",
 	databasePath = "/storagedata",
 }
 
@@ -74,6 +75,18 @@ else
 			break
 		else
 			print("A valid direction is required!")
+		end
+	end
+	while true do
+		print("What is the base name code for this storage system?")
+		print("Base name codes are used to group and differentiate inventory system sites.")
+		write("> ")
+		local baseCode = read()
+		if baseCode and #baseCode > 0 then
+			config.baseCode = baseCode
+			break
+		else
+			print("A base name code is required!")
 		end
 	end
 	configuration.save("master.conf", config)
@@ -195,7 +208,7 @@ while true do
 							if outputQueue[i][j].count == 0 then
 								local info = outputQueue[i][j]
 								table.remove(outputQueue[i], j)
-								rednet.send(info.requester, {type = "item_ready", name = info.name, damage = info.damage, count = info.count, side = i}, "lyq-base-inv")
+								rednet.send(info.requester, {type = "item_ready", name = info.name, damage = info.damage, count = info.count, side = i, baseCode = config.baseCode}, "lyq-base-inv")
 							end
 							found = true
 							break
@@ -213,12 +226,12 @@ while true do
 				configuration.save("master.conf", config)
 				storage.addLayers(message.block, 2)
 			end
-		elseif event[4] == "lyq-base-inv" then
+		elseif event[4] == "lyq-base-inv" and event[3].baseCode == config.baseCode then
 			local message = event[3]
 			if message.type == "item_count" then
-				rednet.send(event[2], {type = "item_quantity", name = message.name, damage = message.damage, count = storage.getItemCount(message.name, message.damage)}, "lyq-base-inv")
+				rednet.send(event[2], {type = "item_quantity", name = message.name, damage = message.damage, count = storage.getItemCount(message.name, message.damage), baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "all_items" then
-				rednet.send(event[2], {type = "all_items_info", info = storage.getAllItemCounts()}, "lyq-base-inv")
+				rednet.send(event[2], {type = "all_items_info", info = storage.getAllItemCounts(), baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "input_sides" then
 			elseif message.type == "output_sides" then
 			elseif message.type == "item_request" then
@@ -229,12 +242,12 @@ while true do
 				if not success then print("Couldn't retrieve "..count.." items.") end
 				-- sent with an item name, damage value, count, and output side to an inv-master to request that it make the items available on that side.
 			elseif message.type == "free_space" then
-				rednet.send(event[2], {type = "free_space_count", info = storage.getSpaceRemaining()}, "lyq-base-inv")
+				rednet.send(event[2], {type = "free_space_count", info = storage.getSpaceRemaining(), baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "free_slots" then
-				rednet.send(event[2], {type = "free_slots_count", info = storage.getSlotsRemaining()}, "lyq-base-inv")
+				rednet.send(event[2], {type = "free_slots_count", info = storage.getSlotsRemaining(), baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "unused_layers" then
 			elseif message.type == "item_density" then
-				rednet.send(event[2], {type = "item_density_percent", info = storage.calculateItemDensity()}, "lyq-base-inv")
+				rednet.send(event[2], {type = "item_density_percent", info = storage.calculateItemDensity(), baseCode = config.baseCode}, "lyq-base-inv")
 			end
 		end
 	elseif event[1] == "timer" then
