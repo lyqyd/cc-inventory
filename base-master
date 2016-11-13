@@ -51,6 +51,7 @@ else
 end
 
 local stations = {}
+local stationInfo = {} --keyed by computer ID.
 
 local clientProtocol = {
 	protocol = "lyq-base",
@@ -64,4 +65,17 @@ base.initialize(config.baseCode, nil, clientProtocol)
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
+	if event[1] == "rednet_message" then
+		if event[4] == "lyq-base" and event[3].baseCode == config.baseCode then
+			local message = event[3]
+			if message.type == "location_info" then
+				if not stationInfo[event[2]] then
+					stationInfo[event[2]] = {
+						locations = {},
+						capabilities = {}
+					}
+				end
+			end
+		end
+	end
 end
