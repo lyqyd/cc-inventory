@@ -45,6 +45,7 @@ local config = {
 	databasePath = "/storagedata",
 }
 
+if not os.loadAPI("base") then error("Could not load base API!") end
 if not os.loadAPI("configuration") then error("Could not load configuration API!") end
 if fs.exists("master.conf") then
 	config = configuration.load("master.conf")
@@ -138,8 +139,10 @@ end
 
 local keepAliveTimer, keepAliveStatus = os.startTimer(5), {false, false, false}
 
+base.initialize(config.baseCode)
+
 while true do
-	local event = {os.pullEventRaw()}
+	local event = {base.handleEvents(os.pullEventRaw())}
 	if event[1] == "rednet_message" then
 		if event[4] == "lyq-inv" then
 			local message = event[3]

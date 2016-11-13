@@ -1,0 +1,67 @@
+--master computer
+--this program oversees the storage and retrieval of items in the storage system.
+
+--initial configuration defaults
+local config = {
+	-- base master configuration file
+	baseCode = "",
+	databasePath = "/basedata",
+}
+
+if not os.loadAPI("base") then error("Could not load base API!") end
+if not os.loadAPI("configuration") then error("Could not load configuration API!") end
+if fs.exists("base.conf") then
+	config = configuration.load("base.conf")
+else
+	--initial setup
+	print("Initial Setup for Master Base Controller")
+	while not os.getComputerLabel() do
+		print("Please provide a label for this computer.")
+		write("> ")
+		local label = read()
+		if #label >= 1 then
+			os.setComputerLabel(label)
+			break
+		else
+			print("A label is required!")
+		end
+	end
+	while true do
+		print("What is the name code for this base?")
+		print("Base name codes are used to group and differentiate sites.")
+		write("> ")
+		local baseCode = read()
+		if baseCode and #baseCode > 0 then
+			config.baseCode = baseCode
+			break
+		else
+			print("A base name code is required!")
+		end
+	end
+	configuration.save("base.conf", config)
+end
+
+peripheral.find("modem", function(name) rednet.open(name) end)
+
+if os.getComputerLabel() then
+	rednet.host("lyq-base", os.getComputerLabel())
+else
+	print("You must label this computer first.")
+	return
+end
+
+local stations = {}
+
+local clientProtocol = {
+	protocol = "lyq-base",
+	name = "Station",
+	online = "station_online",
+	offline = "station_offline",
+	list = stations,
+}
+
+base.initialize(config.baseCode, nil, clientProtocol)
+
+while true do
+	local event = {base.handleEvents(os.pullEventRaw())}
+end
