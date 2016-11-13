@@ -1,0 +1,64 @@
+--craft master computer
+--this program oversees the crafting stations and manages the recipe list.
+
+--initial configuration defaults
+local config = {
+	--craft master configuration file
+	baseCode = "",
+	databasePath = "/craftingdata",
+}
+
+if not os.loadAPI("base") then error("Could not load base API!") end
+if not os.loadAPI("configuration") then error("Could not load configuration API!") end
+if fs.exists("craft-master.conf") then
+	config = configuration.load("craft-master.conf")
+else
+	--initial setup
+	print("Initial Setup for Crafting Master")
+	while not os.getComputerLabel() do
+		print("Please provide a label for this computer.")
+		write("> ")
+		local label = read()
+		if #label >= 1 then
+			os.setComputerLabel(label)
+			break
+		else
+			print("A label is required!")
+		end
+	end
+	while true do
+		print("What is the base name code for this storage system?")
+		print("Base name codes are used to group and differentiate inventory system sites.")
+		write("> ")
+		local baseCode = read()
+		if baseCode and #baseCode > 0 then
+			config.baseCode = baseCode
+			break
+		else
+			print("A base name code is required!")
+		end
+	end
+	configuration.save("craft-master.conf", config)
+end
+
+peripheral.find("modem", function(name) rednet.open(name) end)
+
+local crafters = {}
+
+local clientProtocol = {
+	protocol = "lyq-base-craft",
+	name = "Crafting Station",
+	online = "crafter_online",
+	offline = "crafter_offline",
+	list = crafters,
+}
+
+base.initialize(config.baseCode, nil, clientProtocol)
+
+while true do
+	local event = {base.handleEvents(os.pullEventRaw())}
+	if event[1] == "terminate" then
+		print("Stopping")
+		return
+	end
+end

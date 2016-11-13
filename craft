@@ -1,0 +1,94 @@
+--crafting unit
+--this program is a dispatchable crafter for the base inventory system.
+
+--initial configuration defaults
+local config = {
+	--crafter configuration file
+	--facing is determined by which direction the turtle is looking.
+	facing = 1,
+	baseCode = "",
+}
+
+if not os.loadAPI("base") then error("Could not load base API!") end
+if not os.loadAPI("configuration") then error("Could not load configuration API!") end
+if fs.exists("craft.conf") then
+	config = configuration.load("craft.conf")
+else
+	--initial setup
+	print("Initial Setup for Crafting Unit")
+	while not os.getComputerLabel() do
+		print("Please provide a label for this computer.")
+		write("> ")
+		local label = read()
+		if #label >= 1 then
+			os.setComputerLabel(label)
+			break
+		else
+			print("A label is required!")
+		end
+	end
+	while true do
+		print("Which direction does this crafting station face?")
+		print("Determine the direction by standing behind the turtle and looking in the direction it faces.")
+		print("Enter 1 - 4, corresponding to the correct direction:")
+		print("1. north      2. east")
+		print("3. south      4. west")
+		write("> ") 
+		local direction = tonumber(read())
+		if direction and direction == math.floor(direction) and direction >= 1 and direction <= 4 then
+			config.facing = direction
+			break
+		else
+			print("A valid direction is required!")
+		end
+	end
+	while true do
+		print("What is the base name code for this storage system?")
+		print("Base name codes are used to group and differentiate inventory system sites.")
+		write("> ")
+		local baseCode = read()
+		if baseCode and #baseCode > 0 then
+			config.baseCode = baseCode
+			break
+		else
+			print("A base name code is required!")
+		end
+	end
+	configuration.save("craft.conf", config)
+end
+
+peripheral.find("modem", function(name) rednet.open(name) end)
+
+local serviceProtocol = {
+	protocol = "lyq-base-craft",
+	name = "crafting",
+	online = "crafter_online",
+	offline = "crafter_offline",
+}
+
+base.initialize(config.baseCode, serviceProtocol)
+
+local function communicate()
+	while true do
+		local event = {base.handleEvents(os.pullEventRaw())}
+		if event[1] == "terminate" then
+			print("Stopping")
+			return
+		end
+	end
+end
+
+local function craft()
+	while true do
+		local event = {os.pullEventRaw()}
+		if event[1] == "rednet_message" and event[4] == "lyq-base-craft" then
+			if event[2] == base.getServiceMaster() then
+				if event[3].event == "crafting_task" then
+					
+				end
+			end
+		end
+	end
+end
+
+parallel.waitForAny(communicate, craft)
