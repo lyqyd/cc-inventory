@@ -48,6 +48,17 @@ local function searchForHosts(info)
 	info.responses = 0
 end
 
+local function searchTimerExpired(info)
+	if #info.hosts < 1 then
+		io.write("Please set up a "..info.name.." master!\n")
+		searchForHosts(info)
+	else
+		for i = 1, #info.hosts do
+			rednet.send(info.hosts[i], {type = "base_query", baseCode = comm.base.code}, info.protocol)
+		end
+	end
+end
+
 local function handleClientSide(info, event)
 	if event[2] == info.master then
 		if event[3].type == "master_online" then
@@ -164,23 +175,9 @@ function handleEvents(...)
 			end
 			comm.clients.keepAlive = os.startTimer(pingTime)
 		elseif event[2] == comm.base.search then
-			if #comm.base.hosts < 1 then
-				io.write("Please set up a base master!\n")
-				searchForHosts(comm.base)
-			else
-				for i = 1, #comm.base.hosts do
-					rednet.send(comm.base.hosts[i], {type = "base_query", baseCode = comm.base.code}, comm.base.protocol)
-				end
-			end
+			searchTimerExpired(comm.base)
 		elseif event[2] == comm.sub.search then
-			if #comm.sub.hosts < 1 then
-				io.write("Please set up a "..comm.sub.name.." master!\n")
-				searchForHosts(comm.sub)
-			else
-				for i = 1, #comm.sub.hosts do
-					rednet.send(comm.sub.hosts[i], {type = "base_query", baseCode = comm.base.code}, comm.sub.protocol)
-				end
-			end
+			searchTimerExpired(comm.sub)
 		end
 	elseif event[1] == "terminate" then
 		if comm.base.master > -1 then rednet.send(comm.base.master, {type = comm.base.offline, baseCode = comm.base.code}, comm.base.protocol) end
