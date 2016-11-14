@@ -31,6 +31,8 @@ local config = {
 			{12, 6},
 			{7, 1},
 		},
+		--master coords used to transform gps coordinates and base coordinates for actual pick-up and drop-off coords.
+		master = {5, 6},
 	},
 	retrievalFlightDelay = 1,
 	intakeFlightDelay = 0.4,
@@ -41,6 +43,7 @@ local config = {
 			slotSize = 64,
 		},
 	},
+	locations = {},
 	baseCode = "",
 	databasePath = "/storagedata",
 }
@@ -63,6 +66,44 @@ else
 			print("A label is required!")
 		end
 	end
+	do
+		local loc = vector.new(gps.locate())
+		if loc.y == 0 then
+			local x, y, z
+			repeat
+				print("What is this station's X coordinate?")
+				print("Use the location of the master controller (this computer).")
+				write("> ")
+				x = tonumber(read())
+				if not (x and x == math.floor(x)) then
+					print("A valid integer is required!")
+					x = nil
+				end
+			until x
+			repeat
+				print("What is this station's Y coordinate?")
+				print("Use the location of the master controller (this computer).")
+				write("> ")
+				y = tonumber(read())
+				if not (y and y == math.floor(y) and y > 0) then
+					print("A valid positive integer is required!")
+					y = nil
+				end
+			until y
+			repeat
+				print("What is this station's Z coordinate?")
+				print("Use the location of the master controller (this computer).")
+				write("> ")
+				z = tonumber(read())
+				if not (z and z == math.floor(z)) then
+					print("A valid integer is required!")
+					z = nil
+				end
+			until z
+			loc = vector.new(x, y, z)
+		end
+		config.location = loc
+	end
 	while true do
 		print("Which direction does this storage station face?")
 		print("Determine the direction by standing at the center torch and looking toward the master controller computer (this computer).")
@@ -76,6 +117,39 @@ else
 			break
 		else
 			print("A valid direction is required!")
+		end
+	end
+	do
+		local masterVec = vector.new(config.layout.master[1], 0, config.layout.master[2])
+		local transformVec = {
+			{vector.new(-2, 0, 1), vector.new(-2, 0, -1)},
+			{vector.new(1, 0, 2), vector.new(-1, 0, 2)},
+			{vector.new(2, 0, -1), vector.new(2, 0, 1)},
+			{vector.new(-1, 0, -2), vector.new(1, 0, -2)},
+		}
+		local facingVec = {
+			vector.new(1, 0, 1),
+			vector.new(-1, 0, 1),
+			vector.new(-1, 0, -1),
+			vector.new(1, 0, -1),
+		}
+		for i = 1, 4 do
+			if config.layout.bases[i] then
+				local baseVec = vector.new(config.layout.bases[i][1], 0, config.layout.bases[i][2])
+				local inVec = baseVec - masterVec + transformVec[i][1]
+				local outVec = baseVec - masterVec + transformVec[i][2]
+				if config.facing == 1 or config.facing == 3 then
+					inVec = vector.new(inVec.z, 0, inVec.x)
+					outVec = vector.new(outVec.z, 0, outVec.x)
+				end
+				fVec = facingVec[config.facing]
+				inVec = vector.new(inVec.x * fVec.x, inVec.y * fVec.y, inVec.z * fVec.z)
+				outVec = vector.new(outVec.x * fVec.x, outVec.y * fVec.y, outVec.z * fVec.z)
+				config.locations[i] = {
+					{location = config.location + inVec, capabilities = "accept-items"},
+					{location = config.location + outVec, capabilities = "output-items"},
+				}
+			end
 		end
 	end
 	while true do
@@ -140,6 +214,8 @@ end
 local keepAliveTimer, keepAliveStatus = os.startTimer(5), {false, false, false}
 
 base.initialize(config.baseCode)
+
+local updateLocs = os.startTimer(5)
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
@@ -289,6 +365,20 @@ while true do
 				intakeQueue.timer = os.startTimer(config.intakeFlightDelay)
 			else
 				intakeQueue.timer = nil
+			end
+		elseif event[2] == updateLocs then
+			local base =  base.getBaseMaster()
+			if base then
+				local locs = {}
+				for i = 1, 4 do
+					if config.layout.bases[i] then
+						table.insert(locs, config.locations[i][1])
+						table.insert(locs, config.locations[i][2])
+					end
+				end
+				rednet.send(base, {type = "location_info", info = locs, baseCode = config.baseCode}, "lyq-base")
+			else
+				updateLocs = os.startTimer(5)
 			end
 		end
 	elseif event[1] == "terminate" then

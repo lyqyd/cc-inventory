@@ -71,11 +71,28 @@ while true do
 			if message.type == "location_info" then
 				if not stationInfo[event[2]] then
 					stationInfo[event[2]] = {
-						locations = {},
+						locations = message.info,
 						capabilities = {}
 					}
+				else
+					stationInfo[event[2]].locations = message.info
+					stationInfo[event[2]].capabilities = {}
 				end
+				local info = stationInfo[event[2]]
+				for i, loc in ipairs (info.locations) do
+					for match in string.gmatch(loc.capabilities, "(%S+)") do
+						info.capabilities[match] = true
+					end
+				end
+				io.write("Station "..tostring(event[2]).." has capabilities: ")
+				for label in pairs(info.capabilities) do
+					io.write(label.." ")
+				end
+				io.write("\n")
 			end
 		end
+	elseif event[1] == "terminate" then
+		io.write("Stopping\n")
+		return
 	end
 end
