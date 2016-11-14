@@ -47,9 +47,9 @@ local crafters = {}
 
 local clientProtocol = {
 	protocol = "lyq-base-craft",
-	name = "Crafting Station",
-	online = "crafter_online",
-	offline = "crafter_offline",
+	name = {crafter_online = "Crafting Station", recipe_online = "Recipe Entry Station"},
+	online = {crafter_online = true, recipe_online = true},
+	offline = {crafter_offline = true, recipe_offline = true},
 	list = crafters,
 }
 
