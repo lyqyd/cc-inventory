@@ -78,11 +78,13 @@ local function readStorageDatabase()
 				end
 			elseif string.match(line, "^%d+,%d+,%d+;[%a%d%-]+:?[%a%d%-%^]+ ") then
 				local layer, row, column, storageName, contents = string.match(line, "^(%d+),(%d+),(%d+);([%a%d%-]+:?[%a%d%-%^]+) (.*)")
-				local stored = {storage = storageName, slotSize = storageInfo[storageName].slotSize, slotCount = storageInfo[storageName].slots}
-				for item, quantity in string.gmatch(contents, "([%a%d%-]+:?[%a%d%-%^]+),(%d+);") do
-					table.insert(stored, {name = item, count = tonumber(quantity)})
+				if storageName ~= "none" then
+					local stored = {storage = storageName, slotSize = storageInfo[storageName].slotSize, slotCount = storageInfo[storageName].slots}
+					for item, quantity in string.gmatch(contents, "([%a%d%-]+:?[%a%d%-%^]+),(%d+);") do
+						table.insert(stored, {name = item, count = tonumber(quantity)})
+					end
+					storageDatabase[tonumber(layer)][tonumber(row)][tonumber(column)] = stored
 				end
-				storageDatabase[tonumber(layer)][tonumber(row)][tonumber(column)] = stored
 			end
 		end
 		handle:close()
