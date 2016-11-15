@@ -1,0 +1,80 @@
+--crafting recipe station
+--this program is a crafting recipe entry system for the base inventory system.
+
+--initial configuration defaults
+local config = {
+	--recipe entry configuration file
+	baseCode = "",
+}
+
+if not os.loadAPI("base") then error("Could not load base API!") end
+if not os.loadAPI("configuration") then error("Could not load configuration API!") end
+if fs.exists("recipe.conf") then
+	config = configuration.load("recipe.conf")
+else
+	--initial setup
+	print("Initial Setup for Recipe Entry Station")
+	while not os.getComputerLabel() do
+		print("Please provide a label for this computer.")
+		write("> ")
+		local label = read()
+		if #label >= 1 then
+			os.setComputerLabel(label)
+			break
+		else
+			print("A label is required!")
+		end
+	end
+	while true do
+		print("What is the base name code for this storage system?")
+		print("Base name codes are used to group and differentiate inventory system sites.")
+		write("> ")
+		local baseCode = read()
+		if baseCode and #baseCode > 0 then
+			config.baseCode = baseCode
+			break
+		else
+			print("A base name code is required!")
+		end
+	end
+	configuration.save("recipe.conf", config)
+end
+
+peripheral.find("modem", function(name) rednet.open(name) end)
+
+local serviceProtocol = {
+	protocol = "lyq-base-craft",
+	name = "crafting",
+	online = "recipe_online",
+	offline = "recipe_offline",
+}
+
+local color = term.isColor()
+
+local function printCenter(text)
+	text = tostring(text)
+	local x, y = term.getSize()
+	local xCur, yCur = term.getCursorPos()
+	term.setCursorPos((x - #text) / 2 + 1, yCur)
+	term.write(text)
+end
+
+local function redraw()
+    term.setBackgroundColor(color and colors.gray or colors.black)
+    term.clear()
+    term.setCursorPos(1, 1)
+    term.setTextColor(colors.white)
+    printCenter("Recipe Entry Station")
+    
+
+base.initialize(config.baseCode, serviceProtocol)
+
+while true do
+	local event = {base.handleEvents(os.pullEventRaw())}
+	if event[1] == "turtle_inventory" then
+        --inventory changed.
+	elseif event[1] == "terminate" then
+		print("Stopping")
+		return
+	end
+end
