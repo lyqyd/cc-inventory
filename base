@@ -39,6 +39,11 @@ local comm = {
 		liveStatus = {},
 		types = {},
 	},
+	station = {
+		type = ""
+		locations = {}
+		update = -1
+	},
 }
 
 local function searchForHosts(info)
@@ -196,6 +201,12 @@ function handleEvents(...)
 			searchTimerExpired(comm.base)
 		elseif event[2] == comm.sub.search then
 			searchTimerExpired(comm.sub)
+		elseif event[2] == comm.station.update then
+			if comm.base.master > -1 then
+				rednet.send(comm.base.master, {type = "station_info", stationType = comm.station.type, info = comm.station.locations, baseCode = comm.base.code}, comm.base.protocol)
+			else
+				comm.station.update = os.startTimer(5)
+			end
 		end
 	elseif event[1] == "terminate" then
 		if comm.base.master > -1 then rednet.send(comm.base.master, {type = comm.base.offline, baseCode = comm.base.code}, comm.base.protocol) end
@@ -210,8 +221,13 @@ function handleEvents(...)
 	return unpack(event)
 end
 
-function initialize(baseCode, subConfiguration, clientConfiguration)
+function initialize(baseCode, stationInfo, subConfiguration, clientConfiguration)
 	comm.base.code = baseCode
+	if stationInfo then
+		comm.station.type = stationInfo.type
+		comm.station.locations = stationInfo.locations
+		comm.station.update = os.startTimer(5)
+	end
 	if clientConfiguration then
 		config = clientConfiguration
 		comm.clients.protocol = config.protocol

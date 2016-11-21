@@ -60,14 +60,19 @@ local function printCenter(text)
 end
 
 local function redraw()
-    term.setBackgroundColor(color and colors.gray or colors.black)
-    term.clear()
-    term.setCursorPos(1, 1)
-    term.setTextColor(colors.white)
-    printCenter("Recipe Entry Station")
+	term.setBackgroundColor(color and colors.gray or colors.black)
+	term.clear()
+	term.setCursorPos(1, 1)
+	term.setTextColor(colors.white)
+	printCenter("Recipe Entry Station")
+	
     
+local stationInfo = {
+	type = "recipe-entry",
+	locations = {}
+}
 
-base.initialize(config.baseCode, serviceProtocol)
+base.initialize(config.baseCode, stationInfo, serviceProtocol)
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}

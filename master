@@ -213,9 +213,19 @@ end
 
 local keepAliveTimer, keepAliveStatus = os.startTimer(5), {false, false, false}
 
-base.initialize(config.baseCode)
+local stationInfo = {
+	type = "items-inventory",
+	locations = {},
+}
 
-local updateLocs = os.startTimer(5)
+for i = 1, 4 do
+	if config.layout.bases[i] then
+		table.insert(stationInfo.locations, config.locations[i][1])
+		table.insert(stationInfo.locations, config.locations[i][2])
+	end
+end
+
+base.initialize(config.baseCode, stationInfo)
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
@@ -365,20 +375,6 @@ while true do
 				intakeQueue.timer = os.startTimer(config.intakeFlightDelay)
 			else
 				intakeQueue.timer = nil
-			end
-		elseif event[2] == updateLocs then
-			local base =  base.getBaseMaster()
-			if base then
-				local locs = {}
-				for i = 1, 4 do
-					if config.layout.bases[i] then
-						table.insert(locs, config.locations[i][1])
-						table.insert(locs, config.locations[i][2])
-					end
-				end
-				rednet.send(base, {type = "location_info", info = locs, baseCode = config.baseCode}, "lyq-base")
-			else
-				updateLocs = os.startTimer(5)
 			end
 		end
 	elseif event[1] == "terminate" then

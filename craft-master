@@ -53,7 +53,12 @@ local clientProtocol = {
 	list = crafters,
 }
 
-base.initialize(config.baseCode, nil, clientProtocol)
+local stationInfo = {
+	type = "crafting-master",
+	locations = {},
+}
+
+base.initialize(config.baseCode, stationInfo, nil, clientProtocol)
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
