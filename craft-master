@@ -1,6 +1,8 @@
 --craft master computer
 --this program oversees the crafting stations and manages the recipe list.
 
+local stationType = "crafting-master"
+
 --initial configuration defaults
 local config = {
 	--craft master configuration file
@@ -55,9 +57,18 @@ local clientProtocol = {
 
 base.initialize(config.baseCode, nil, clientProtocol)
 
+local updateInfo = os.startTimer(5)
+
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
-	if event[1] == "terminate" then
+	if event[1] == "timer" and event[2] == updateInfo then
+		local base =  base.getBaseMaster()
+			if base then
+				rednet.send(base, {type = "station_info", stationType = stationType, info = {}, baseCode = config.baseCode}, "lyq-base")
+			else
+				updateInfo = os.startTimer(5)
+			end
+	elseif event[1] == "terminate" then
 		print("Stopping")
 		return
 	end
