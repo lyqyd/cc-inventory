@@ -1,6 +1,8 @@
 --master computer
 --this program oversees the storage and retrieval of items in the storage system.
 
+local stationType = "items-inventory"
+
 --initial configuration defaults
 local config = {
 	--master configuration file
@@ -215,7 +217,7 @@ local keepAliveTimer, keepAliveStatus = os.startTimer(5), {false, false, false}
 
 base.initialize(config.baseCode)
 
-local updateLocs = os.startTimer(5)
+local updateInfo = os.startTimer(5)
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
@@ -366,7 +368,7 @@ while true do
 			else
 				intakeQueue.timer = nil
 			end
-		elseif event[2] == updateLocs then
+		elseif event[2] == updateInfo then
 			local base =  base.getBaseMaster()
 			if base then
 				local locs = {}
@@ -376,9 +378,9 @@ while true do
 						table.insert(locs, config.locations[i][2])
 					end
 				end
-				rednet.send(base, {type = "location_info", info = locs, baseCode = config.baseCode}, "lyq-base")
+				rednet.send(base, {type = "station_info", stationType = stationType, info = locs, baseCode = config.baseCode}, "lyq-base")
 			else
-				updateLocs = os.startTimer(5)
+				updateInfo = os.startTimer(5)
 			end
 		end
 	elseif event[1] == "terminate" then
