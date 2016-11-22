@@ -92,7 +92,7 @@ else
 		config.locations = {
 			{location = config.location + facingVec[config.facing][1], capabilities = "output-items"},
 			{location = config.location, capabilities = "accept-items"},
-			{location = config.location + facingVec[config.facing][2], capabilities = "fly-quads"},
+			{location = config.location + facingVec[config.facing][2], capabilities = "fly-quad-items"},
 		}
 	end
 	while true do
