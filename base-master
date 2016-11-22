@@ -55,13 +55,13 @@ local stationInfo = {} --keyed by computer ID.
 
 local clientProtocol = {
 	protocol = "lyq-base",
-	name = "Station",
-	online = "station_online",
-	offline = "station_offline",
+	name = {station_online = "Station"},
+	online = {station_online = true},
+	offline = {station_offline = true},
 	list = stations,
 }
 
-base.initialize(config.baseCode, nil, clientProtocol)
+base.initialize(config.baseCode, nil, nil, clientProtocol)
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
