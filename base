@@ -40,9 +40,9 @@ local comm = {
 		types = {},
 	},
 	station = {
-		type = ""
-		locations = {}
-		update = -1
+		type = "",
+		locations = {},
+		update = -1,
 	},
 }
 
@@ -178,11 +178,15 @@ function handleEvents(...)
 		end
 	elseif event[1] == "timer" then
 		if event[2] == comm.base.keepAlive then
-			io.write("Base master timed out.\n")
-			searchForHosts(comm.base)
+			if comm.base.master > -1 then
+				io.write("Base master timed out.\n")
+				searchForHosts(comm.base)
+			end
 		elseif event[2] == comm.sub.keepAlive then
-			io.write("Backend timed out.\n")
-			searchForHosts(comm.sub)
+			if comm.sub.master > -1 then
+				io.write("Backend timed out.\n")
+				searchForHosts(comm.sub)
+			end
 		elseif event[2] == comm.clients.keepAlive then
 			for i = #comm.clients.list, 1, -1 do
 				if comm.clients.liveStatus[i] == false then
@@ -199,6 +203,9 @@ function handleEvents(...)
 			comm.clients.keepAlive = os.startTimer(pingTime)
 		elseif event[2] == comm.base.search then
 			searchTimerExpired(comm.base)
+			if #comm.station.type > 0 then
+				comm.station.update = os.startTimer(5)
+			end
 		elseif event[2] == comm.sub.search then
 			searchTimerExpired(comm.sub)
 		elseif event[2] == comm.station.update then
