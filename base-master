@@ -160,7 +160,6 @@ end
 
 local function queueFlight(objectType, objectInfo, origin, destination)
 	local flightStation, base = chooseFlightBase(objectType, origin, destination)
-	local flightCount = 0
 	local total = 0
 	while objectInfo.count > 0 do
 		if not base then break end
@@ -172,11 +171,9 @@ local function queueFlight(objectType, objectInfo, origin, destination)
 		table.insert(base.queue, {id = flightID, route = route, origin = origin, destination = destination, objectInfo = newInfo})
 		objectInfo.count = objectInfo.count - count
 		total = total + count
-		flightCount = flightCount + 1
-		if flightCount >= 4 or base.count < #base.queue + 1 then
-			--if we're moving a lot of items, use multiple bases.
+		if base.count < #base.queue + 1 then
+			--if the base we're using runs out of quadracoptors, use a different base.
 			flightStation, base = chooseFlightBase(objectType, origin, destination)
-			flightCount = 0
 		end
 	end
 	return total
