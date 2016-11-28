@@ -4,6 +4,10 @@
 --initial configuration defaults
 local config = {
 	-- base master configuration file
+	maxFlightQuantity = {
+		item = 64,
+		fluid = 1000,
+	},
 	baseCode = "",
 	databasePath = "/basedata",
 }
@@ -52,6 +56,10 @@ end
 
 local stations = {}
 local stationInfo = {} --keyed by computer ID.
+local surplus = {} --keyed into groups (item, fluid), then by identifier (item name-damage, etc), then by station ID; list of locations.
+local request = {} --keyed into groups (item, fluid), then by identifier (item name-damage, etc), then by station ID; list of locations.
+local flights = {} --keyed into groups (item, fluid), then by station ID, then numerically-indexed with location, queue, count, and delta keys.
+local flightID = 0 --incremented for each flight, is unique base-wide
 
 local clientProtocol = {
 	protocol = "lyq-base",
@@ -63,30 +71,227 @@ local clientProtocol = {
 
 base.initialize(config.baseCode, nil, nil, clientProtocol)
 
+local function getDistance(loc1, loc2)
+	return math.sqrt((loc2.x - loc1.x)^2 + (loc2.y - loc1.y)^2 + (loc2.z - loc1.z)^2)
+end
+
+local keywords = {
+	stations = {
+		flightOnly = {
+			item = "",
+			fluid = "",
+		},
+		storage = {
+			item = "items-inventory",
+			fluid = "",
+		},
+	},
+	capabilities = {
+		flight = {
+			item = "fly-quad-items",
+			fluid = "fly-quad-fluids",
+		},
+	},
+}
+
+local keywordLookup = {}
+
+for class, words in pairs(keywords) do
+	keywordLookup[class] = {}
+	for word, types in pairs(words) do
+		keywordLookup[class][word] = {}
+		for obj, name in pairs(types) do
+			keywordLookup[class][word][name] = obj
+		end
+	end
+end
+
+local function normalizeName(info)
+	if info.name and info.damage then
+		return info.name, info.damage
+	elseif info.combinedName then
+		local name, damage = string.match(info.combinedName, "(.-)%-(%d+)$")
+		if name and damage then
+			return name, damage
+		else
+			return info.combinedName, 0
+		end
+	else
+		return false
+	end
+end
+
+
+local function getBestBase(obj, id)
+	local bases = stationInfo[id].capabilities[keywords.capabilities.flight[obj]]
+	if #bases > 1 then
+		local flightBases = flights[obj][id]
+		table.sort(flightBases, function(a, b) return (a.count - #a.queue) < (b.count - #b.queue) end)
+		if flightBases[#flightBases].count - #flightBases[#flightBases].queue > 0 then
+			return flightBases[#flightBases]
+		end
+	elseif #bases == 1 and flights[obj][id][1].count - #flights[obj][id][1].queue > 0 then
+		return flights[obj][id][1]
+	end
+	return false
+end
+
+local function chooseFlightBase(obj, from, to)
+	local str = keywords.capabilities.flight[obj]
+	if stationInfo[from.id].capabilities[str] then
+		return from.id, getBestBase(obj, from.id)
+	elseif stationInfo[to.id].capabilities[str] then
+		return to.id, getBestBase(obj, to.id)
+	else
+		local options = {}
+		for i, info in ipairs(stationInfo) do
+			if info.type == keywords.stations.flightOnly[obj] then
+				for _, baseInfo in ipairs(flights[obj][i]) do
+					if baseInfo.count - #baseInfo.queue > 0 then
+						table.insert(options, {id = i, base = baseInfo, distance = getDistance(from.location, baseInfo.location)})
+					end
+				end
+			end
+		end
+		table.sort(options, function(a,b) return a.distance < b.distance end)
+		return options[1].id, options[1].base
+	end
+end
+
+local function queueFlight(objectType, objectInfo, origin, destination)
+	local flightStation, base = chooseFlightBase(objectType, origin, destination)
+	local flightCount = 0
+	local total = 0
+	while objectInfo.count > 0 do
+		if not base then break end
+		local count = math.min(objectInfo.count, config.maxFlightQuantity[objectType])
+		local route = createRoute(base, origin.location, destination.location, {name = objectInfo.name, damage = objectInfo.damage, combinedName = objectInfo.combinedName, count = count})
+		local newInfo = {count = count}
+		newInfo.name, newInfo.damage = normalizeName(objectInfo)
+		flightID = flightID + 1
+		table.insert(base.queue, {id = flightID, route = route, origin = origin, destination = destination, objectInfo = newInfo})
+		objectInfo.count = objectInfo.count - count
+		total = total + count
+		flightCount = flightCount + 1
+		if flightCount >= 4 or base.count < #base.queue + 1 then
+			--if we're moving a lot of items, use multiple bases.
+			flightStation, base = chooseFlightBase(objectType, origin, destination)
+			flightCount = 0
+		end
+	end
+	return total
+end
+
+local function fulfillRequestsFromSurplus()
+	--this is how everything moves, inventory systems create surplus and request entries as necessary.
+	for type, names in pairs(request) do
+		if surplus[type] then
+			for name, stationList in pairs(names) do
+				if surplus[type][name] then
+					--create request list for this item.
+					local requesters = {limited = {}, infinite = {}}
+					for id, list in pairs(stationList) do
+						for _, info in ipairs(list) do
+							if info.count == true then
+								table.insert(requesters.infinite, {id = id, location = info.location, total = info.total})
+							else
+								table.insert(requesters.limited, {id = id, location = info.location, count = info.count})
+							end
+						end
+					end
+					table.sort(requesters.limited, function(a,b) return a.count < b.count end)
+					--now match surpluses to requests.
+					--create surplus list for this item.
+					local surpluses = {}
+					for id, list in pairs(surplus[type][name]) do
+						for _, info in ipairs(list) do
+							table.insert(surpluses, {id = id, location = info.location, count = info.count})
+						end
+					end
+					table.sort(surpluses, function(a,b) return a.count < b.count end)
+					for i, info in ipairs(surpluses) do
+						while info.count > 0 do
+							if #requesters.limited > 0 then
+								local requestInfo = requesters.limited[1]
+								local count = math.min(info.count, requestInfo.count)
+								local total = queueFlight(type, {combinedName = name, count = count}, {id = info.id, location = info.location}, {id = requestInfo.id, location = requestInfo.location})
+								info.count = info.count - total
+								requestInfo.count = requestInfo.count - total
+								if requestInfo.count == 0 then
+									table.remove(requesters.limited, 1)
+								end
+							elseif #requesters.infinite > 0 then
+								table.sort(requesters.infinite, function(a,b) return a.total < b.total end)
+								local requestInfo = requesters.infinite[1]
+								local count = math.min(info.count, requestInfo.count)
+								local total = queueFlight(type, {combinedName = name, count = count}, {id = info.id, location = info.location}, {id = requestInfo.id, location = requestInfo.location})
+								info.count = info.count - total
+								requestInfo.total = requestInfo.total + total
+							else
+								--no more requesters.
+								break
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+local function storeSurplus()
+	--to store surplus in inventory, we create matching requests at the inventory's intake interfaces.
+	for type, names in pairs(surplus) do
+		for name, stationList in pairs(names) do
+			for id, list in pairs(stationList) do
+				for _, info in ipairs(list) do
+					--select a storage facility and instruct it to request the objects.
+				end
+			end
+		end
+	end
+end
+
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
 	if event[1] == "rednet_message" then
 		if event[4] == "lyq-base" and event[3].baseCode == config.baseCode then
 			local message = event[3]
 			if message.type == "station_info" then
-				if not stationInfo[event[2]] then
-					stationInfo[event[2]] = {
+				local id = event[2]
+				if not stationInfo[id] then
+					stationInfo[id] = {
 						locations = message.info,
 						capabilities = {},
 						type = message.stationType,
 					}
 				else
-					stationInfo[event[2]].locations = message.info
-					stationInfo[event[2]].capabilities = {}
-					stationInfo[event[2]].type = message.stationType
+					stationInfo[id].locations = message.info
+					stationInfo[id].capabilities = {}
+					stationInfo[id].type = message.stationType
 				end
-				local info = stationInfo[event[2]]
+				local info = stationInfo[id]
 				for i, loc in ipairs (info.locations) do
 					for match in string.gmatch(loc.capabilities, "(%S+)") do
 						if not info.capabilities[match] then
 							info.capabilities[match] = {loc.location}
 						else
 							table.insert(info.capabilities[match], loc.location)
+						end
+						if keywordLookup.capabilities.flight[match] then
+							local objectType = keywordLookup.capabilities.flight[match]
+							if not flights[objectType] then flights[objectType] = {} end
+							if not flights[objectType][id] then flights[objectType][id] = {} end
+							local found = false
+							for j, info in ipairs(flights[objectType][id]) do
+								if sameLocation(info.location, loc) then
+									found = true
+									break
+								end
+							end
+							if not found then
+								table.insert(flights[objectType][id], {location = loc, queue = {}, count = 0, delta = 0})
+							end
 						end
 					end
 				end
@@ -95,6 +300,58 @@ while true do
 					io.write(label.." ")
 				end
 				io.write("\n")
+			elseif message.type == "object_surplus" then
+				--a station has too much of something.
+				local objectName = resolveObjectName(message.objectType, message.objectInfo)
+				if not surplus[message.objectType] then surplus[message.objectType] = {} end
+				if not surplus[message.objectType][objectName] then surplus[message.objectType][objectName] = {} end
+				if not surplus[message.objectType][objectName][event[2]] then surplus[message.objectType][objectName][event[2]] = {} end
+				local list = surplus[message.objectType][objectName][event[2]]
+				local found = false
+				if #list > 0 then
+					local loc = message.location
+					for i = 1, #list do
+						local listLoc = list[i].location
+						if listLoc.x = loc.x and listLoc.y == loc.y and listLoc.z == loc.z then
+							list[i].count = message.objectInfo.count
+							found = true
+							break
+						end
+					end
+				end
+				if not found then
+					table.insert(surplus[message.objectType][objectName][event[2]], {location = message.location, count = message.objectInfo.count})
+				end
+				--determine where this item should go
+				if request[message.objectType] and request[message.objectType][objectName] then
+					for id, list in pairs(request[message.objectType][objectName]) do
+						for _, info in ipairs(list) do
+
+			elseif message.type == "object_required" then
+				--a station has too little of something.
+				local objectName = resolveObjectName(message.objectType, message.objectInfo)
+				if not request[message.objectType] then request[message.objectType] = {} end
+				if not request[message.objectType][objectName] then request[message.objectType][objectName] = {} end
+				if not request[message.objectType][objectName][event[2]] then request[message.objectType][objectName][event[2]] = {} end
+				local list = request[message.objectType][objectName][event[2]]
+				local found = false
+				if #list > 0 then
+					local loc = message.location
+					for i = 1, #list do
+						local listLoc = list[i].location
+						if listLoc.x = loc.x and listLoc.y == loc.y and listLoc.z == loc.z then
+							list[i].count = message.objectInfo.count
+							found = true
+							break
+						end
+					end
+				end
+				if not found then
+					table.insert(request[message.objectType][objectName][event[2]], {location = message.location, count = message.objectInfo.count})
+				end
+				if list.count == true and not list.total then
+					list.total = 0
+				end
 			end
 		end
 	elseif event[1] == "terminate" then
