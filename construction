@@ -3,6 +3,32 @@ local keepAliveTimer
 local project = {}
 local loc, buildLoc
 
+local config = {
+	baseCode = "",
+}
+
+if not os.loadAPI("base") then error("Could not load base API!") end
+if not os.loadAPI("configuration") then error("Could not load configuration API!") end
+
+if fs.exists("construction.conf") then
+	config = configuration.load("construction.conf")
+else
+	print("Initial Setup for Construction Turtle")
+	while true do
+		print("What is the name code for this base?")
+		print("Base name codes are used to group and differentiate sites.")
+		write("> ")
+		local baseCode = read()
+		if baseCode and #baseCode > 0 then
+			config.baseCode = baseCode
+			break
+		else
+			print("A base name code is required!")
+		end
+	end
+	configuration.save("construction.conf", config)
+end
+
 do
 	--initial ID grab of master computer
 	turtle.turnLeft()
@@ -18,14 +44,6 @@ end
 if not location then if shell.resolveProgram("location") then os.loadAPI(shell.resolveProgram("location")) elseif fs.exists("usr/apis/location") then os.loadAPI("usr/apis/location") else error("Could not load location API!") end end
 
 peripheral.find("modem", function(name) rednet.open(name) end)
-
-local function waitForMaster()
-	print("Attempting to connect to backend. ("..tostring(master)..")")
-	rednet.send(master, {event = "construction_online"}, "lyq-inv")
-	keepAliveTimer = os.startTimer(7)
-end
-
-waitForMaster()
 
 if fs.exists("/etc/projects") and fs.isDir("/etc/projects") then
 	projectDir = "/etc/projects"
@@ -127,27 +145,20 @@ local function constructEnv()
 	return env
 end
 
+local serviceProtocol = {
+	protocol = "lyq-inv",
+	name = "inventory",
+	online = "construction_online",
+	offline = "construction_offline",
+	master = master,
+}
+
+base.initialize(config.baseCode, nil, serviceProtocol, nil, true)
+
 local function communicate()
 	while true do
-		local event = {os.pullEventRaw()}
-		if event[1] == "rednet_message" and event[4] == "lyq-inv" then
-			if event[2] == master then
-				if event[3].event == "master_online" then
-					print("Connected to backend. ("..tostring(event[2])..")")
-					keepAliveTimer = os.startTimer(7)
-				elseif event[3].event == "master_offline" then
-					print("Backend went offline.")
-					waitForMaster()
-				elseif event[3].event == "keepalive_ping" then
-					rednet.send(master, {event = "keepalive_pong"}, "lyq-inv")
-					keepAliveTimer = os.startTimer(7)
-				end
-			end
-		elseif event[1] == "timer" and event[2] == keepAliveTimer then
-			print("Backend timed out.")
-			waitForMaster()
-		elseif event[1] == "terminate" then
-			if master then rednet.send(master, {event = "construction_offline"}, "lyq-inv") end
+		local event = {base.handleEvents(os.pullEventRaw())}
+		if event[1] == "terminate" then
 			print("Stopping")
 			return
 		end
@@ -159,7 +170,7 @@ local function construct()
 		local event = {os.pullEventRaw()}
 		if event[1] == "rednet_message" and event[4] == "lyq-inv" then
 			if event[2] == master then
-				if event[3].event == "build_layer" then
+				if event[3].type == "build_layer" then
 					local origin, layer = event[3].origin, event[3] .layer
 					project.requirements.locations.start = location.new(origin.x, origin.y, origin.z, origin.h)
 					project.requirements.locations.setup = location.new(layer.x, layer.y, layer.z, layer.h)
@@ -170,7 +181,7 @@ local function construct()
 						setfenv(project.instructions, constructEnv())
 						project.instructions()
 						--then tell master we did it:
-						rednet.send(master, {event = "layer_complete", block = storageBlock}, "lyq-inv")
+						rednet.send(master, {type = "layer_complete", block = storageBlock}, "lyq-inv")
 					else
 						--figure out what isn't ready and fix it.
 					end

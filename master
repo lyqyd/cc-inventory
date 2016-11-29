@@ -153,8 +153,8 @@ else
 		end
 	end
 	while true do
-		print("What is the base name code for this storage system?")
-		print("Base name codes are used to group and differentiate inventory system sites.")
+		print("What is the name code for this base?")
+		print("Base name codes are used to group and differentiate sites.")
 		write("> ")
 		local baseCode = read()
 		if baseCode and #baseCode > 0 then
@@ -180,6 +180,7 @@ end
 
 local itemsStored = 0
 local storeControl, sortControl, construction
+local clients = {}
 local routeQueue = {}
 --retrieve and intake are flight queues.
 local retrieveQueue, intakeQueue, outputQueue = {}, {}, {{}, {}, {}, {}}
@@ -225,66 +226,40 @@ for i = 1, 4 do
 	end
 end
 
-base.initialize(config.baseCode, stationInfo)
+local clientProtocol = {
+	protcol = "lyq-inv",
+	name = {
+		storage_online = "Storage controller",
+		sorting_online = "Sorting controller",
+		construction_online = "Construction turtle",
+	},
+	online = {
+		storage_online = true,
+		sorting_online = true,
+		construction_online = true,
+	},
+	offline = {
+		storage_offline = true,
+		sorting_offline = true,
+		construction_offline = true,
+	},
+	list = clients,
+}
+
+base.initialize(config.baseCode, stationInfo, nil, clientProtocol)
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
+	storeControl, sortControl, construction = (base.getClientByType("storage_online")), (base.getClientByType("sorting_online")), (base.getClientByType("construction_online"))
 	if event[1] == "rednet_message" then
 		if event[4] == "lyq-inv" then
 			local message = event[3]
-			if message.event == "storage_online" then
-				if (storeControl == nil or storeControl == event[2]) then
-					storeControl = event[2]
-					keepAliveStatus[1] = true
-					print("Storage controller connected. ("..tostring(storeControl)..")")
-					rednet.send(storeControl, {event = "master_online"}, "lyq-inv")
-				else
-					print("Multiple storage controllers found!")
-					return
-				end
-			elseif message.event == "sorting_online" then
-				if (sortControl == nil or sortControl == event[2]) then
-					sortControl = event[2]
-					keepAliveStatus[2] = true
-					print("Sorting controller connected. ("..tostring(sortControl)..")")
-					rednet.send(sortControl, {event = "master_online"}, "lyq-inv")
-				else
-					print("Multiple sorting controllers found!")
-					return
-				end
-			elseif message.event == "construction_online" then
-				if (construction == nil or construction == event[2]) then
-					construction = event[2]
-					keepAliveStatus[3] = true
-					print("Construction turtle connected. ("..tostring(construction)..")")
-					rednet.send(construction, {event = "master_online"}, "lyq-inv")
-				else
-					print("Multiple construction turtles found!")
-					return
-				end
-			elseif message.event == "storage_offline" then
-				storeControl = nil
-				print("Storage controller offline.")
-			elseif message.event == "sorting_offline" then
-				sortControl = nil
-				print("Sorting controller offline.")
-			elseif message.event == "construction_offline" then
-				construction = nil
-				print("Construction turtle offline.")
-			elseif message.event == "keepalive_pong" then
-				if event[2] == storeControl then
-					keepAliveStatus[1] = true
-				elseif event[2] == sortControl then
-					keepAliveStatus[2] = true
-				elseif event[2] == construction then
-					keepAliveStatus[3] = true
-				end
-			elseif message.event == "store" and event[2] == storeControl then
+			if message.type == "store" and event[2] == storeControl then
 				print("Storing "..tostring(message.info.count).." of "..message.info.name.."-"..message.info.damage)
-				storage.store(message.info, function(route) rednet.send(storeControl, {event = "fly_route", route = route}, "lyq-inv") end)
+				storage.store(message.info, function(route) rednet.send(storeControl, {type = "fly_route", route = route}, "lyq-inv") end)
 				itemsStored = itemsStored + 1
 				checkRemainingSpace()
-			elseif message.event == "retrieve" and event[2] == storeControl then
+			elseif message.type == "retrieve" and event[2] == storeControl then
 				print("Retrieved "..tostring(message.info.count).." of "..message.info.name.."-"..message.info.damage)
 				local found = false
 				for j = 1, math.max(#outputQueue[1], #outputQueue[2], #outputQueue[3], #outputQueue[4]) do
@@ -293,7 +268,7 @@ while true do
 							outputQueue[i][j].count = outputQueue[i][j].count - message.info.count
 							local route = storage.createOutputRoute(i)
 							table.insert(route, 1, i)
-							rednet.send(sortControl, {event = "fly_route", route = route}, "lyq-inv")
+							rednet.send(sortControl, {type = "fly_route", route = route}, "lyq-inv")
 							if outputQueue[i][j].count == 0 then
 								local info = outputQueue[i][j]
 								table.remove(outputQueue[i], j)
@@ -305,12 +280,12 @@ while true do
 					end
 					if found then break end
 				end
-			elseif message.event == "item_arrived" and event[2] == sortControl then
+			elseif message.type == "item_arrived" and event[2] == sortControl then
 				print("Received "..tostring(message.info.count).." of "..message.info.name.."-"..message.info.damage)
 				local route = storage.createIntakeRoute(message.side)
 				table.insert(route, 1, message.side)
 				queueFlight(route, intakeQueue)
-			elseif message.event == "layer_complete" then
+			elseif message.type == "layer_complete" then
 				config.layers = config.layers + 2
 				configuration.save("master.conf", config)
 				storage.addLayers(message.block, 2)
@@ -340,27 +315,9 @@ while true do
 			end
 		end
 	elseif event[1] == "timer" then
-		if event[2] == keepAliveTimer then
-			if storeControl and not keepAliveStatus[1] then
-				storeControl = nil
-				print("Storage controller timed out.")
-			end
-			if sortControl and not keepAliveStatus[2] then
-				sortControl = nil
-				print("Sorting controller timed out.")
-			end
-			if construction and not keepAliveStatus[3] then
-				construction = nil
-				print("Sorting controller timed out.")
-			end
-			if storeControl then rednet.send(storeControl, {event = "keepalive_ping"}, "lyq-inv") end
-			if sortControl then rednet.send(sortControl, {event = "keepalive_ping"}, "lyq-inv") end
-			if construction then rednet.send(construction, {event = "keepalive_ping"}, "lyq-inv") end
-			keepAliveStatus = {false, false, false}
-			keepAliveTimer = os.startTimer(5)
-		elseif event[2] == retrieveQueue.timer then
+		if event[2] == retrieveQueue.timer then
 			if storeControl then
-				rednet.send(storeControl, {event = "fly_route", route = table.remove(retrieveQueue, 1)}, "lyq-inv")
+				rednet.send(storeControl, {type = "fly_route", route = table.remove(retrieveQueue, 1)}, "lyq-inv")
 			end
 			if #retrieveQueue > 0 then
 				retrieveQueue.timer = os.startTimer(config.retrievalFlightDelay)
@@ -369,7 +326,7 @@ while true do
 			end
 		elseif event[2] == intakeQueue.timer then
 			if storeControl then
-				rednet.send(sortControl, {event = "fly_route", route = table.remove(intakeQueue, 1)}, "lyq-inv")
+				rednet.send(sortControl, {type = "fly_route", route = table.remove(intakeQueue, 1)}, "lyq-inv")
 			end
 			if #intakeQueue > 0 then
 				intakeQueue.timer = os.startTimer(config.intakeFlightDelay)
@@ -378,9 +335,6 @@ while true do
 			end
 		end
 	elseif event[1] == "terminate" then
-		rednet.unhost("lyq-inv")
-		if storeControl then rednet.send(storeControl, {event = "master_offline"}, "lyq-inv") end
-		if sortControl then rednet.send(sortControl, {event = "master_offline"}, "lyq-inv") end
 		print("Stopping")
 		return
 	end
