@@ -118,7 +118,7 @@ local serviceProtocol = {
 base.initialize(config.baseCode, nil, serviceProtocol, nil, true)
 
 while true do
-	local event = {os.pullEventRaw()}
+	local event = {base.handleEvents(os.pullEventRaw())}
 	if event[1] == "item_count" then
 		rednet.send(master, {type = "item_arrived", side = counterLookup[event[2]], info = {name = event[3], damage = event[4], count = event[5]}}, "lyq-inv")
 	elseif event[1] == "rednet_message" and event[4] == "lyq-inv" then
