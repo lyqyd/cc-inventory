@@ -45,7 +45,7 @@ local serviceProtocol = {
 base.initialize(config.baseCode, nil, serviceProtocol, nil, true)
 
 while true do
-	local event = {os.pullEventRaw()}
+	local event = {base.handleEvents(os.pullEventRaw())}
 	if event[1] == "item_count" then
 		if event[2] == storageSide then
 			rednet.send(master, {type = "store", info = {name = event[3], damage = event[4], count = event[5]}}, "lyq-inv")
