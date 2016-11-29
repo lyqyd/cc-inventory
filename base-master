@@ -69,7 +69,7 @@ local clientProtocol = {
 	list = stations,
 }
 
-base.initialize(config.baseCode, nil, nil, clientProtocol)
+base.initialize(config.baseCode, nil, nil, clientProtocol, true)
 
 local function getDistance(loc1, loc2)
 	return math.sqrt((loc2.x - loc1.x)^2 + (loc2.y - loc1.y)^2 + (loc2.z - loc1.z)^2)
