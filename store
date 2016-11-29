@@ -4,67 +4,62 @@
 --right side is store
 --back side is quad base
 
-local storageSide = "right"
-local retrievalSide = "left"
-local quadSide = "back"
+local config = {
+	storageSide = "right",
+	retrievalSide = "left",
+	quadSide = "back",
+	baseCode = "",
+}
 
-local master
+if not os.loadAPI("base") then error("Could not load base API!") end
+if not os.loadAPI("configuration") then error("Could not load configuration API!") end
+
+if fs.exists("storage.conf") then
+	config = configuration.load("storage.conf")
+else
+	print("Initial Setup for Storage Controller")
+	while true do
+		print("What is the name code for this base?")
+		print("Base name codes are used to group and differentiate sites.")
+		write("> ")
+		local baseCode = read()
+		if baseCode and #baseCode > 0 then
+			config.baseCode = baseCode
+			break
+		else
+			print("A base name code is required!")
+		end
+	end
+	configuration.save("storage.conf", config)
+end
 
 peripheral.find("modem", function(name) rednet.open(name) end)
 
-local keepAliveTimer
+local serviceProtocol = {
+	protocol = "lyq-inv",
+	name = "inventory",
+	online = "storage_online",
+	offline = "storage_offline",
+}
 
-local function waitForMaster()
-	local hosts
-	repeat
-		print("Searching for backend...")
-		hosts = {rednet.lookup("lyq-inv")}
-		if #hosts > 1 then
-			print("Multiple backends found! Please remove all but one from this network.")
-			sleep(5)
-		elseif #hosts < 1 then
-			print("No backend found! Please add one to this network.")
-			sleep(5)
-		end
-	until #hosts == 1
-
-	master = hosts[1]
-	print("Attempting to connect to backend. ("..tostring(master)..")")
-	rednet.send(master, {event = "storage_online"}, "lyq-inv")
-	keepAliveTimer = os.startTimer(7)
-end
-
-waitForMaster()
+base.initialize(config.baseCode, nil, serviceProtocol, nil, true)
 
 while true do
 	local event = {os.pullEventRaw()}
 	if event[1] == "item_count" then
 		if event[2] == storageSide then
-			rednet.send(master, {event = "store", info = {name = event[3], damage = event[4], count = event[5]}}, "lyq-inv")
+			rednet.send(master, {type = "store", info = {name = event[3], damage = event[4], count = event[5]}}, "lyq-inv")
 			print("Storage Pending "..tostring(event[5]).." of "..event[3].."-"..event[4])
 		elseif event[2] == retrievalSide then
-			rednet.send(master, {event = "retrieve", info = {name = event[3], damage = event[4], count = event[5]}}, "lyq-inv")
+			rednet.send(master, {type = "retrieve", info = {name = event[3], damage = event[4], count = event[5]}}, "lyq-inv")
 		end
 	elseif event[1] == "rednet_message" and event[4] == "lyq-inv" then
 		if event[2] == master then
-			if event[3].event == "fly_route" then
+			if event[3].type == "fly_route" then
 				peripheral.call(quadSide, "flyQuad", event[3].route)
-			elseif event[3].event == "master_online" then
-				print("Connected to backend. ("..tostring(event[2])..")")
-				keepAliveTimer = os.startTimer(7)
-			elseif event[3].event == "master_offline" then
-				print("Backend went offline.")
-				waitForMaster()
-			elseif event[3].event == "keepalive_ping" then
-				rednet.send(master, {event = "keepalive_pong"}, "lyq-inv")
-				keepAliveTimer = os.startTimer(7)
 			end
 		end
-	elseif event[1] == "timer" and event[2] == keepAliveTimer then
-		print("Backend timed out.")
-		waitForMaster()
 	elseif event[1] == "terminate" then
-		if master then rednet.send(master, {event = "storage_offline"}, "lyq-inv") end
 		print("Stopping")
 		return
 	end
