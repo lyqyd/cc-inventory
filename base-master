@@ -257,11 +257,85 @@ end
 
 local function storeSurplus()
 	--to store surplus in inventory, we create matching requests at the inventory's intake interfaces.
-	for type, names in pairs(surplus) do
-		for name, stationList in pairs(names) do
+	for objType, names in pairs(surplus) do
+		for _name, stationList in pairs(names) do
 			for id, list in pairs(stationList) do
 				for _, info in ipairs(list) do
 					--select a storage facility and instruct it to request the objects.
+					local highCount, stationID = 0, -1
+					local name, damage = normalizeName({combinedName = _name})
+					for inv, stoInfo in pairs(storage[objType]) do
+						--pick the facility with the most of the item already in storage.
+						if stoInfo[name][damage] > highCount then
+							highCount = stoInfo[name][damage]
+							stationID = inv
+						end
+					end
+					if stationID == -1 then
+						--no storage facility has any yet, so select the closest,
+						local lowDistance = math.huge
+						for i, staInfo in pairs(stationInfo) do
+							if staInfo.type == keywords.stations.storage[objType] then
+								for j, loc in ipairs(staInfo.locations) do
+									if string.find(loc.capabilities, keywords.capabilities.accept[objType], 1, true) then
+										local distance = getDistance(info.location, loc.location)
+										if distance < lowDistance then
+											lowDistance = distance
+											stationID = i
+										end
+									end
+								end
+							end
+						end
+					end
+					if stationID == -1 then
+						--failure to find a storage facility
+					else
+						rednet.send(stationID, {type = "create_request", objectType = objType, objectInfo = {name = name, damage = damage, count = info.count}, baseCode = config.baseCode}, "lyq-base-inv")
+					end
+				end
+			end
+		end
+	end
+end
+
+local function fillRequests()
+	--to fill request from inventory, we create matching surpluses at the inventory's output interfaces.
+	for objType, names in pairs(request) do
+		for _name, stationList in pairs(names) do
+			for id, list in pairs(stationList) do
+				for _, info in ipairs(list) do
+					--select a storage facility and instruct it to surplus the objects.
+					local total = 0
+					while info.count == true or total < info.count do
+						local lowCount, stationID = math.huge, -1
+						local name, damage = normalizeName({combinedName = _name})
+						for inv, stoInfo in pairs(storage[objType]) do
+							--pick the facility with the lowest quantity of the item in storage.
+							if stoInfo[name] then
+								local objectCount = stoInfo[name][damage]
+								if objectCount < lowCount and objectCount > 0 then
+									lowCount = objectCount
+									stationID = inv
+								end
+							end
+						end
+						if info.count ~= true then
+							lowCount = math.min(lowCount, info.count - total)
+						else
+							--build in a little safety for infinite consumers.
+							lowCount = math.min(lowCount, 64)
+						end
+						if stationID == -1 then
+							--failure to find a storage facility
+							break
+						else
+							rednet.send(stationID, {type = "create_surplus", objectType = objType, objectInfo = {name = name, damage = damage, count = lowCount}, baseCode = config.baseCode}, "lyq-base-inv")
+							total = total + lowCount
+							--more infinite consumer safety
+							if info.count == true then break end
+						end
+					end
 				end
 			end
 		end
