@@ -183,7 +183,7 @@ local storeControl, sortControl, construction
 local clients = {}
 local routeQueue = {}
 --retrieve and intake are flight queues.
-local retrieveQueue, intakeQueue, outputQueue = {}, {}, {{}, {}, {}, {}}
+local retrieveQueue, intakeQueue, requestQueue, outputQueue = {}, {}, {{}, {}, {}, {}}, {{}, {}, {}, {}}
 local flightQueueTimer = os.startTimer(0)
 
 local direction = {
@@ -227,7 +227,7 @@ for i = 1, 4 do
 end
 
 local clientProtocol = {
-	protcol = "lyq-inv",
+	protocol = "lyq-inv",
 	name = {
 		storage_online = "Storage controller",
 		sorting_online = "Sorting controller",
@@ -264,15 +264,15 @@ while true do
 				local found = false
 				for j = 1, math.max(#outputQueue[1], #outputQueue[2], #outputQueue[3], #outputQueue[4]) do
 					for i = 1, 4 do
-						if outputQueue[i][j] and outputQueue[i][j].name == message.info.name and outputQueue[i][j].damage == message.info.damage and outputQueue[i][j].count >= message.info.count then
-							outputQueue[i][j].count = outputQueue[i][j].count - message.info.count
+						local info = outputQueue[i][j]
+						if info and info.name == message.info.name and info.damage == message.info.damage and (info.count == message.info.count or (info.count > 64 and message.info.count == 64) or mesage.info.count == info.count % 64) then
+							info.count = info.count - message.info.count
 							local route = storage.createOutputRoute(i)
 							table.insert(route, 1, i)
 							rednet.send(sortControl, {type = "fly_route", route = route}, "lyq-inv")
-							if outputQueue[i][j].count == 0 then
-								local info = outputQueue[i][j]
+							if info.count == 0 then
 								table.remove(outputQueue[i], j)
-								rednet.send(info.requester, {type = "item_ready", name = info.name, damage = info.damage, count = info.count, side = i, baseCode = config.baseCode}, "lyq-base-inv")
+								base.sendToBaseMaster({type = "object_surplus", objectType = "item", objectInfo = {name = info.name, damage = info.damage, count = info.count}, location = config.locations[i][2].location}, "lyq-base")
 							end
 							found = true
 							break
@@ -285,6 +285,16 @@ while true do
 				local route = storage.createIntakeRoute(message.side)
 				table.insert(route, 1, message.side)
 				queueFlight(route, intakeQueue)
+				for i = 1, #requestQueue[message.side] do
+					local info = requestQueue[message.side][i]
+					if info and info.name == message.info.name and info.damage == message.info.damage and (info.count == message.info.count or (info.count > 64 and message.info.count == 64) or mesage.info.count == info.count % 64)  then
+						info.count = info.count - message.info.count
+						if info.count == 0 then
+							table.remove(requestQueue[message.side], i)
+						end
+						break
+					end
+				end
 			elseif message.type == "layer_complete" then
 				config.layers = config.layers + 2
 				configuration.save("master.conf", config)
@@ -296,15 +306,45 @@ while true do
 				rednet.send(event[2], {type = "item_quantity", name = message.name, damage = message.damage, count = storage.getItemCount(message.name, message.damage), baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "all_items" then
 				rednet.send(event[2], {type = "all_items_info", info = storage.getAllItemCounts(), baseCode = config.baseCode}, "lyq-base-inv")
-			elseif message.type == "input_sides" then
-			elseif message.type == "output_sides" then
-			elseif message.type == "item_request" then
-				local itemData = {name = message.name, damage = message.damage, count = message.count, requester = event[2]}
-				table.insert(outputQueue[message.side], itemData)
-				print("Retrieving "..tostring(message.count).." of "..message.name.."-"..message.damage)
+			elseif message.type == "create_surplus" then
+				local itemData = message.objectInfo
+				local queueMin, queueChoice = math.huge, -1
+				for i = 1, 4 do
+					local count = 0
+					for j = 1, #outputQueue[i] do
+						count = count + outputQueue[i][j].count
+					end
+					if count < queueMin then
+						queueMin = count
+						queueChoice = i
+					end
+				end
+				table.insert(outputQueue[queueChoice], itemData)
+				print("Retrieving "..tostring(itemData.count).." of "..itemData.name.."-"..itemData.damage)
 				local success, count = storage.retrieve(itemData, function(route) queueFlight(route, retrieveQueue) end)
-				if not success then print("Couldn't retrieve "..count.." items.") end
-				-- sent with an item name, damage value, count, and output side to an inv-master to request that it make the items available on that side.
+				if not success then
+					print("Couldn't retrieve "..count.." items.")
+					local queueInfo = outputQueue[queueChoice][#outputQueue[queueChoice]]
+					queueInfo.count = queueInfo.count - count
+					if queueInfo.count == 0 then
+						outputQueue[queueChoice][#outputQueue[queueChoice]] = nil
+					end
+				end
+			elseif message.type == "create_request" then
+				local itemData = message.objectInfo
+				local queueMin, queueChoice = math.huge, -1
+				for i = 1, 4 do
+					local count = 0
+					for j = 1, #requestQueue[i] do
+						count = count + requestQueue[i][j].count
+					end
+					if count < queueMin then
+						queueMin = count
+						queueChoice = i
+					end
+				end
+				table.insert(requestQueue[queueChoice], itemData)
+				base.sendToBaseMaster({type = "object_required", objectType = "item", objectInfo = itemData, location = config.locations[queueChoice][2].location, baseCode = config.baseCode}, "lyq-base")
 			elseif message.type == "free_space" then
 				rednet.send(event[2], {type = "free_space_count", info = storage.getSpaceRemaining(), baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "free_slots" then
