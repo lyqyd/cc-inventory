@@ -46,6 +46,68 @@ local comm = {
 	},
 }
 
+function getBaseMaster()
+	if comm.base.master > -1 then
+		return comm.base.master
+	else
+		return false
+	end
+end
+
+function getServiceMaster()
+	if comm.sub.master > -1 then
+		return comm.sub.master
+	else
+		return false
+	end
+end
+
+function getClientType(client)
+	if #comm.clients.list > 0 then
+		for i = 1, #comm.clients.list do
+			if comm.clients.list[i] == client then
+				return comm.clients.types[i]
+			end
+		end
+		return false, "not a client"
+	else
+		return false, "no clients"
+	end
+end
+
+function getClientByType(clientType)
+	if #comm.clients.list > 0 then
+		for i = 1, #comm.clients.list do
+			if comm.clients.types[i] == clientType then
+				return comm.clients.list[i]
+			end
+		end
+		return false, "no clients of that type"
+	else
+		return false, "no clients"
+	end
+end
+
+function sendToBaseMaster(message, protocol)
+	local master = getBaseMaster()
+	if master then
+		rednet.send(master, message, protocol or comm.base.protocol)
+		return true
+	else
+		return false
+	end
+end
+
+function sendToServiceMaster(message, protocol)
+	local master = getServiceMaster()
+	if master then
+		rednet.send(master, message, protocol or comm.sub.protocol)
+		return true
+	else
+		return false
+	end
+end
+
 local function searchForHosts(info)
 	info.master = -1
 	rednet.broadcast({sType = "lookup", sProtocol = info.protocol}, "dns")
@@ -90,48 +152,6 @@ local function handleClientSide(info, event)
 				searchForHosts(info)
 			end
 		end
-	end
-end
-
-function getBaseMaster()
-	if comm.base.master > -1 then
-		return comm.base.master
-	else
-		return false
-	end
-end
-
-function getServiceMaster()
-	if comm.sub.master > -1 then
-		return comm.sub.master
-	else
-		return false
-	end
-end
-
-function getClientType(client)
-	if #comm.clients.list > 0 then
-		for i = 1, #comm.clients.list do
-			if comm.clients.list[i] == client then
-				return comm.clients.types[i]
-			end
-		end
-		return false, "not a client"
-	else
-		return false, "no clients"
-	end
-end
-
-function getClientByType(clientType)
-	if #comm.clients.list > 0 then
-		for i = 1, #comm.clients.list do
-			if comm.clients.types[i] == clientType then
-				return comm.clients.types[i]
-			end
-		end
-		return false, "no clients of that type"
-	else
-		return false, "no clients"
 	end
 end
 
