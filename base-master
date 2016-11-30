@@ -419,11 +419,6 @@ while true do
 				if not found then
 					table.insert(surplus[message.objectType][objectName][event[2]], {location = message.location, count = message.objectInfo.count})
 				end
-				--determine where this item should go
-				if request[message.objectType] and request[message.objectType][objectName] then
-					for id, list in pairs(request[message.objectType][objectName]) do
-						for _, info in ipairs(list) do
-
 			elseif message.type == "object_required" then
 				--a station has too little of something.
 				local objectName = resolveObjectName(message.objectType, message.objectInfo)
