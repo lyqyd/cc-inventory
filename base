@@ -42,7 +42,6 @@ local comm = {
 	station = {
 		type = "",
 		locations = {},
-		update = -1,
 	},
 }
 
@@ -131,6 +130,10 @@ local function handleClientSide(info, event)
 	if event[2] == info.master then
 		if event[3].type == "master_online" then
 			io.write("Connected to "..info.name.." master. ("..tostring(event[2])..")\n")
+			if info == comm.base and #comm.station.type > 0 then
+				--update station info at base master, if applicable.
+				rednet.send(info.master, {type = "station_info", stationType = comm.station.type, info = comm.station.locations, baseCode = comm.base.code}, info.protocol)
+			end
 			info.keepAlive = os.startTimer(pingWait)
 		elseif event[3].type == "master_offline" then
 			io.write(string.upper(string.sub(info.name, 1, 1))..string.sub(info.name, 2).." master went offline.\n")
@@ -236,17 +239,8 @@ function handleEvents(...)
 			comm.clients.keepAlive = os.startTimer(pingTime)
 		elseif event[2] == comm.base.search then
 			searchTimerExpired(comm.base)
-			if #comm.station.type > 0 then
-				comm.station.update = os.startTimer(5)
-			end
 		elseif event[2] == comm.sub.search then
 			searchTimerExpired(comm.sub)
-		elseif event[2] == comm.station.update then
-			if comm.base.master > -1 then
-				rednet.send(comm.base.master, {type = "station_info", stationType = comm.station.type, info = comm.station.locations, baseCode = comm.base.code}, comm.base.protocol)
-			else
-				comm.station.update = os.startTimer(5)
-			end
 		end
 	elseif event[1] == "terminate" then
 		if comm.base.master > -1 then rednet.send(comm.base.master, {type = comm.base.offline, baseCode = comm.base.code}, comm.base.protocol) end
@@ -266,7 +260,6 @@ function initialize(baseCode, stationInfo, subConfiguration, clientConfiguration
 	if stationInfo then
 		comm.station.type = stationInfo.type
 		comm.station.locations = stationInfo.locations
-		comm.station.update = os.startTimer(5)
 	end
 	if clientConfiguration then
 		config = clientConfiguration
