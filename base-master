@@ -60,6 +60,7 @@ local surplus = {} --keyed into groups (item, fluid), then by identifier (item n
 local request = {} --keyed into groups (item, fluid), then by identifier (item name-damage, etc), then by station ID; list of locations.
 local flights = {} --keyed into groups (item, fluid), then by station ID, then numerically-indexed with location, queue, count, and delta keys.
 local flightID = 0 --incremented for each flight, is unique base-wide
+local storage = {} --keyed into groups (item, fluid), then by station ID, then by name, then by damage, value is quantity of that object.
 
 local clientProtocol = {
 	protocol = "lyq-base",
@@ -310,6 +311,13 @@ while true do
 						end
 					end
 				end
+				--see if this station is a storage station, grab the list of contents if it is
+				local storageKeyword = keywordLookup.station.storage[message.stationType]
+				if storageKeyword == "item" then
+					rednet.send(event[2], {type = "all_items_info", baseCode = config.baseCode},"lyq-base-inv")
+				elseif storageKeyword == "fluid" then
+					--fluids lookup
+				end
 				io.write("Station "..tostring(event[2]).." has capabilities: ")
 				for label in pairs(info.capabilities) do
 					io.write(label.." ")
@@ -367,6 +375,10 @@ while true do
 				if list.count == true and not list.total then
 					list.total = 0
 				end
+			end
+		elseif event[4] == "lyq-base-inv" and message.baseCode == config.baseCode then
+			if message.type == "all_items_info" then
+				storage.item[event[2]] = message.info
 			end
 		end
 	elseif event[1] == "terminate" then
