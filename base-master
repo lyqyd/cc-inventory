@@ -78,18 +78,22 @@ end
 local keywords = {
 	stations = {
 		flightOnly = {
-			item = "",
-			fluid = "",
+			item = "items-flight-base",
+			fluid = "fluids-flight-base",
 		},
 		storage = {
 			item = "items-inventory",
-			fluid = "",
+			fluid = "fluids-inventory",
 		},
 	},
 	capabilities = {
 		flight = {
 			item = "fly-quad-items",
 			fluid = "fly-quad-fluids",
+		},
+		accept = {
+			item = "accept-items",
+			fluid = "accept-fluids",
 		},
 	},
 }
@@ -121,6 +125,20 @@ local function normalizeName(info)
 	end
 end
 
+local function resolveObjectName(class, info)
+	if class == "item" then
+		if info.combinedName then
+			return info.combinedName
+		elseif info.name and info.damage then
+			if info.damage > 0 then
+				return info.name.."-"..info.damage
+			else
+				return info.name
+			end
+		end
+	end
+	return false
+end
 
 local function getBestBase(obj, id)
 	local bases = stationInfo[id].capabilities[keywords.capabilities.flight[obj]]
@@ -252,8 +270,8 @@ end
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
 	if event[1] == "rednet_message" then
-		if event[4] == "lyq-base" and event[3].baseCode == config.baseCode then
-			local message = event[3]
+		local message = event[3]
+		if event[4] == "lyq-base" and message.baseCode == config.baseCode then
 			if message.type == "station_info" then
 				local id = event[2]
 				if not stationInfo[id] then
@@ -309,7 +327,7 @@ while true do
 					local loc = message.location
 					for i = 1, #list do
 						local listLoc = list[i].location
-						if listLoc.x = loc.x and listLoc.y == loc.y and listLoc.z == loc.z then
+						if listLoc.x == loc.x and listLoc.y == loc.y and listLoc.z == loc.z then
 							list[i].count = message.objectInfo.count
 							found = true
 							break
@@ -336,7 +354,7 @@ while true do
 					local loc = message.location
 					for i = 1, #list do
 						local listLoc = list[i].location
-						if listLoc.x = loc.x and listLoc.y == loc.y and listLoc.z == loc.z then
+						if listLoc.x == loc.x and listLoc.y == loc.y and listLoc.z == loc.z then
 							list[i].count = message.objectInfo.count
 							found = true
 							break
