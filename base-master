@@ -13,6 +13,7 @@ local config = {
 }
 
 if not os.loadAPI("base") then error("Could not load base API!") end
+if not os.loadAPI("flight") then error("Could not load flight API!") end
 if not os.loadAPI("configuration") then error("Could not load configuration API!") end
 if fs.exists("base.conf") then
 	config = configuration.load("base.conf")
@@ -183,9 +184,9 @@ local function queueFlight(objectType, objectInfo, origin, destination)
 	while objectInfo.count > 0 do
 		if not base then break end
 		local count = math.min(objectInfo.count, config.maxFlightQuantity[objectType])
-		local route = createRoute(base, origin.location, destination.location, {name = objectInfo.name, damage = objectInfo.damage, combinedName = objectInfo.combinedName, count = count})
 		local newInfo = {count = count}
 		newInfo.name, newInfo.damage = normalizeName(objectInfo)
+		local route = flight.route(base, origin.location, destination.location, nil, newInfo.count, newInfo.name.." "..newInfo.damage)
 		flightID = flightID + 1
 		table.insert(base.queue, {id = flightID, route = route, origin = origin, destination = destination, objectInfo = newInfo})
 		objectInfo.count = objectInfo.count - count
