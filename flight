@@ -1,0 +1,125 @@
+--flight api
+
+local shortFlightDistance = 6
+local stepDistance = 48
+
+local directions = {
+	x = {
+		[1] = "east",
+		[-1] = "west",
+	},
+	y = {
+		[1] = "up",
+		[-1] = "down",
+	},
+	z = {
+		[1] = "south",
+		[-1] = "north",
+	},
+}
+
+local flightLevels = {
+	north = 92,
+	east = 93,
+	south = 93,
+	west = 92,
+}
+
+local function horizontalDistance(a, b)
+	return math.sqrt((b.x - a.x)^2 + (b.z - a.z)^2)
+end
+
+local function concatenate(a, b)
+	--fast table concatenation, appends the numerically-indexed contents of b to a.
+	local n = #a
+	for i = 1, #b do
+		n = n + 1
+		a[n] = b[i]
+	end
+	return n
+end
+
+local function getDirections(a, b)
+	local xDir = b.x - a.x
+	local xName = directions.x[xDir / math.abs(xDir)]
+	local zDir = b.z - a.z
+	local zName = directions.z[zDir / math.abs(zDir)]
+	if math.abs(xDir) >= math.abs(zDir) then
+		return xName, math.abs(xDir), zName, math.abs(zDir)
+	else
+		return zName, math.abs(zDir), xName, math.abs(xDir)
+	end
+end
+
+local function pointToPoint(a, b)
+	local height = a.y
+	local route, n = {}, 0
+	local info = {short = {total = 0}, long = {total = 0}}
+	local info.long.name, info.long.dist, info.short.name, info.short.dist = getDirections(a, b)
+	local longFlight = horizontalDistance(a, b) > shortFlightDistance
+	if longFlight then
+		local steps = math.ceil(longDist / stepDistance)
+
+		local function adjustHeight(dirName, curHeight)
+			if curHeight ~= flightLevels[dirName] then
+				local delta = flightLevels[dirName] - curHeight
+				n = n + 1
+				route[n] = directions.y[delta / math.abs(delta)].." "..tostring(delta)
+			end
+		end
+
+		local function step(info, _dist)
+			adjustHeight(info.name, height)
+			local dist = _dist or math.floor(info.dist / steps)
+			n = n + 1
+			route[n] = info.name.." "..tostring(step)
+			info.total = info.total + dist
+		end
+		
+		for i = 1, steps do
+			if i == steps then
+				step(info.long, info.long.dist - info.long.total)
+				step(info.short, info.short.dist - info.short.total)
+			else
+				step(info.long)
+				step(info.short)
+			end
+		end
+	else
+		local flyHeight = math.max(a.y, b.y)
+		if flyHeight > a.y then
+			n = n + 1
+			route[n] = directions.y[1].." "..tostring(flyHeight - a.y)
+		end
+		n = n + 1
+		route[n] = info.long.name.." "..tostring(info.long.dist)
+		n = n + 1
+		route[n] = info.short.name.." "..tostring(info.short.dist)
+		if flyHeight > b.y then
+			n = n + 1
+			route[n] = directions.y[-1].." "..tostring(flyHeight - b.y)
+		end
+	end
+	return route
+end
+
+function route(a, b, c, d, count, filter)
+	if not d then d = a end
+	local route = pointToPoint(a, b)
+	local n = #route
+	if filter then
+		n = n + 1
+		route[n] = "filter "..filter
+	end
+	n = n + 1
+	if count then
+		route[n] = "suck "..count
+	else
+		route[n] = "suck"
+	end
+	n = concatenate(route, pointToPoint(b, c))
+	n = n + 1
+	route[n] = "drop"
+	n = concatenate(route, pointToPoint(c, d))
+	return route
+end
