@@ -262,37 +262,41 @@ local function storeSurplus()
 		for _name, stationList in pairs(names) do
 			for id, list in pairs(stationList) do
 				for _, info in ipairs(list) do
-					--select a storage facility and instruct it to request the objects.
-					local highCount, stationID = 0, -1
-					local name, damage = normalizeName({combinedName = _name})
-					for inv, stoInfo in pairs(storage[objType]) do
-						--pick the facility with the most of the item already in storage.
-						if stoInfo[name][damage] > highCount then
-							highCount = stoInfo[name][damage]
-							stationID = inv
+					if not info.flag then
+						--select a storage facility and instruct it to request the objects.
+						local highCount, stationID = 0, -1
+						local name, damage = normalizeName({combinedName = _name})
+						for inv, stoInfo in pairs(storage[objType]) do
+							--pick the facility with the most of the item already in storage.
+							if stoInfo[name][damage] > highCount then
+								highCount = stoInfo[name][damage]
+								stationID = inv
+							end
 						end
-					end
-					if stationID == -1 then
-						--no storage facility has any yet, so select the closest,
-						local lowDistance = math.huge
-						for i, staInfo in pairs(stationInfo) do
-							if staInfo.type == keywords.stations.storage[objType] then
-								for j, loc in ipairs(staInfo.locations) do
-									if string.find(loc.capabilities, keywords.capabilities.accept[objType], 1, true) then
-										local distance = getDistance(info.location, loc.location)
-										if distance < lowDistance then
-											lowDistance = distance
-											stationID = i
+						if stationID == -1 then
+							--no storage facility has any yet, so select the closest,
+							local lowDistance = math.huge
+							for i, staInfo in pairs(stationInfo) do
+								if staInfo.type == keywords.stations.storage[objType] then
+									for j, loc in ipairs(staInfo.locations) do
+										if string.find(loc.capabilities, keywords.capabilities.accept[objType], 1, true) then
+											local distance = getDistance(info.location, loc.location)
+											if distance < lowDistance then
+												lowDistance = distance
+												stationID = i
+											end
 										end
 									end
 								end
 							end
 						end
-					end
-					if stationID == -1 then
-						--failure to find a storage facility
-					else
-						rednet.send(stationID, {type = "create_request", objectType = objType, objectInfo = {name = name, damage = damage, count = info.count}, baseCode = config.baseCode}, "lyq-base-inv")
+						if stationID == -1 then
+							--failure to find a storage facility
+						else
+							rednet.send(stationID, {type = "create_request", objectType = objType, objectInfo = {name = name, damage = damage, count = info.count}, baseCode = config.baseCode}, "lyq-base-inv")
+							--flag this surplus as destined for storage, so we don't attempt to store it again.
+							info.flag = true
+						end
 					end
 				end
 			end
