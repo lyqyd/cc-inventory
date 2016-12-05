@@ -123,3 +123,44 @@ function route(a, b, c, d, count, filter)
 	n = concatenate(route, pointToPoint(c, d))
 	return route
 end
+
+local Queue = {
+	handleEvents = function(self, ...)
+		local event = {...}
+		if event[1] == "timer" and event[2] == self.timer then
+			local count = peripheral.call(self.side, "getQuadCount")
+			if count < 1 then
+				self.timer = os.startTimer(self.spacing)
+				return "no_quads"
+			elseif count < self.low then
+				os.queueEvent("low_quads")
+			end
+			local info = table.remove(self.queue, 1)
+			peripheral.call(self.side, "flyQuad", info.route)
+			if #self.queue > 0 then
+				self.timer = os.startTimer(self.spacing)
+			else
+				self.timer = -1
+			end
+			return "route_depart", route
+		end
+	end,
+	add = function(self, routeInfo)
+		table.insert(self.queue, routeInfo)
+		if self.timer == -1 then
+			self.timer = os.startTimer(self.spacing)
+		end
+	end,
+}
+
+local queueMeta = {__index = Queue}
+
+function queue(side, time, threshold)
+	local obj = setmetatable({}, queueMeta)
+	obj.timer = -1
+	obj.queue = {}
+	obj.side = side
+	obj.spacing = time or 0.8
+	obj.low = threshold or 4
+	return obj
+end
