@@ -1,4 +1,5 @@
 --flight api
+local unpack = unpack or table.unpack
 
 local shortFlightDistance = 6
 local stepDistance = 48
@@ -128,27 +129,30 @@ local Queue = {
 	handleEvents = function(self, ...)
 		local event = {...}
 		if event[1] == "timer" and event[2] == self.timer then
-			local count = peripheral.call(self.side, "getQuadCount")
-			if count < 1 then
-				self.timer = os.startTimer(self.spacing)
-				return "no_quads"
-			elseif count < self.low then
-				os.queueEvent("low_quads")
-			end
-			local info = table.remove(self.queue, 1)
-			peripheral.call(self.side, "flyQuad", info.route)
 			if #self.queue > 0 then
+				local count = peripheral.call(self.side, "getQuadCount")
+				if count < 1 then
+					self.timer = os.startTimer(self.spacing)
+					return "no_quads"
+				elseif count < self.low then
+					os.queueEvent("low_quads")
+				end
+				local info = table.remove(self.queue, 1)
+				peripheral.call(self.side, "flyQuad", info.route)
+				--allow an additional timer event to space out the next flight, even if we've just emptied the queue.
 				self.timer = os.startTimer(self.spacing)
+				return "route_depart", route
 			else
 				self.timer = -1
 			end
-			return "route_depart", route
 		end
+		return unpack(event)
 	end,
 	add = function(self, routeInfo)
 		table.insert(self.queue, routeInfo)
 		if self.timer == -1 then
-			self.timer = os.startTimer(self.spacing)
+			--this can be safely set for immediate expiration, since the timer following our last flight has expired.
+			self.timer = os.startTimer(0)
 		end
 	end,
 }
