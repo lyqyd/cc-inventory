@@ -60,6 +60,7 @@ local stationInfo = {} --keyed by computer ID.
 local surplus = {} --keyed into groups (item, fluid), then by identifier (item name-damage, etc), then by station ID; list of locations.
 local request = {} --keyed into groups (item, fluid), then by identifier (item name-damage, etc), then by station ID; list of locations.
 local flights = {} --keyed into groups (item, fluid), then by station ID, then numerically-indexed with location, queue, count, and delta keys.
+local flightLookup = {}
 local flightID = 0 --incremented for each flight, is unique base-wide
 local storage = {} --keyed into groups (item, fluid), then by station ID, then by name, then by damage, value is quantity of that object.
 
@@ -73,8 +74,12 @@ local clientProtocol = {
 
 base.initialize(config.baseCode, nil, nil, clientProtocol, true)
 
-local function getDistance(loc1, loc2)
-	return math.sqrt((loc2.x - loc1.x)^2 + (loc2.y - loc1.y)^2 + (loc2.z - loc1.z)^2)
+local function getDistance(a, b)
+	return math.sqrt((b.x - a.x)^2 + (b.y - a.y)^2 + (b.z - a.z)^2)
+end
+
+local function areLocationsEqual(a, b)
+	return a.x == b.x and a.y == b.y and a.z == b.z
 end
 
 local keywords = {
@@ -189,6 +194,7 @@ local function queueFlight(objectType, objectInfo, origin, destination)
 		local route = flight.route(base, origin.location, destination.location, nil, newInfo.count, newInfo.name.." "..newInfo.damage)
 		flightID = flightID + 1
 		table.insert(base.queue, {id = flightID, route = route, origin = origin, destination = destination, objectInfo = newInfo})
+		flightLookup[flightID] = base
 		objectInfo.count = objectInfo.count - count
 		total = total + count
 		if base.count < #base.queue + 1 then
@@ -448,6 +454,22 @@ while true do
 				end
 				if list.count == true and not list.total then
 					list.total = 0
+				end
+			elseif message.type == "flight_dispatched" then
+				local baseInfo = flightLookup.id
+				if baseInfo then
+					baseInfo.count = baseInfo.count - 1
+				end
+			elseif message.type == "flight_arrived" then
+				local loc = message.location
+				for type, ids in pairs(flights) do
+					for id, bases in pairs(ids) do
+						for i, info in ipairs(bases) do
+							if areLocationsEqual(info.location, loc) then
+								info.count = info.count + 1
+							end
+						end
+					end
 				end
 			end
 		elseif event[4] == "lyq-base-inv" and message.baseCode == config.baseCode then

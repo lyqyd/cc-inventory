@@ -12,6 +12,7 @@ local config = {
 }
 
 if not os.loadAPI("base") then error("Could not load base API!") end
+if not os.loadAPI("flight") then error("Could not load flight API!") end
 if not os.loadAPI("configuration") then error("Could not load configuration API!") end
 if fs.exists("craft.conf") then
 	config = configuration.load("craft.conf")
@@ -126,9 +127,11 @@ local stationInfo = {
 
 base.initialize(config.baseCode, stationInfo, serviceProtocol)
 
+local queue = flight.queue()
+
 local function communicate()
 	while true do
-		local event = {base.handleEvents(os.pullEventRaw())}
+		local event = {queue:handleEvents(base.handleEvents(os.pullEventRaw()))}
 		if event[1] == "terminate" then
 			print("Stopping")
 			return
