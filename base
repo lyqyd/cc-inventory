@@ -45,6 +45,14 @@ local comm = {
 	},
 }
 
+local flyQueues = {
+	
+}
+
+local function areLocationsEqual(a, b)
+	return a.x == b.x and a.y == b.y and a.z == b.z
+end
+
 function getBaseMaster()
 	if comm.base.master > -1 then
 		return comm.base.master
@@ -158,6 +166,35 @@ local function handleClientSide(info, event)
 	end
 end
 
+local function handleFlightDispatching(event)
+	if event[1] == "rednet_message" then
+		if event[2] == comm.base.master then
+			if event[3].type = "fly_route" then
+				for i, info in ipairs(flyQueues) do
+					if areLocationsEqual(info.location, event[3].location) then
+						info.queue:add({route = event[3].route, location = event[3].location, id = event[3].id, origin = event[3].origin, destination = event[3].destination, objectInfo = event[3].objectInfo})
+						break
+					end
+				end
+			end
+		end
+	elseif event[1] == "quad_landed" then
+		for i, info in ipairs(flyQueues) do
+			if event[2] == info.queue.side then
+				rednet.send(comm.base.master, {type = "flight_arrived", location = info.location})
+				break
+			end
+		end
+	else
+		for i, info in ipairs(flyQueues) do
+			local result = {info.queue:handleEvents(unpack(event))}
+			if result[1] == "route_depart" then
+				rednet.send(comm.base.master, {type = "flight_dispatched", result[2].id, result[2].location})
+			end
+		end
+	end
+end
+
 function handleEvents(...)
 	local event = {...}
 	if event[1] == "rednet_message" then
@@ -169,6 +206,9 @@ function handleEvents(...)
 			end
 		elseif event[4] == comm.base.protocol and comm.base.protocol ~= comm.clients.protocol then
 			handleClientSide(comm.base, event)
+			if #flyQueues > 0 then
+				handleFlightDispatching(event)
+			end
 		elseif event[4] == comm.sub.protocol then
 			handleClientSide(comm.sub, event)
 		elseif event[4] == comm.clients.protocol then
@@ -293,4 +333,8 @@ function initialize(baseCode, stationInfo, subConfiguration, clientConfiguration
 			searchForHosts(comm.sub)
 		end
 	end
+end
+
+function addFlightBase(flightQueue, location)
+	table.insert(flyQueues, {queue = flightQueue, location = location})
 end
