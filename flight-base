@@ -1,0 +1,120 @@
+--flight base
+--this is a station that only flies quadracoptors.
+--default setup is one quad base on top of the computer, but it could be manually configured to support as many bases as desired.
+
+--initial configuration defaults
+local config = {
+	--flight base configuration file
+	baseCode = "",
+	location = nil,
+	locations = {},
+}
+
+local slotMap = {5, 6, 7, 9, 10, 11, 13, 14, 15}
+
+if not os.loadAPI("base") then error("Could not load base API!") end
+if not os.loadAPI("flight") then error("Could not load flight API!") end
+if not os.loadAPI("configuration") then error("Could not load configuration API!") end
+if fs.exists("flight.conf") then
+	config = configuration.load("flight.conf")
+else
+	--initial setup
+	print("Initial Setup for Flight Base")
+	while not os.getComputerLabel() do
+		print("Please provide a label for this computer.")
+		write("> ")
+		local label = read()
+		if #label >= 1 then
+			os.setComputerLabel(label)
+			break
+		else
+			print("A label is required!")
+		end
+	end
+	do
+		local loc = vector.new(gps.locate())
+		if loc.y == 0 then
+			local x, y, z
+			repeat
+				print("What is this station's X coordinate?")
+				print("Use the location of this turtle.")
+				write("> ")
+				x = tonumber(read())
+				if not (x and x == math.floor(x)) then
+					print("A valid integer is required!")
+					x = nil
+				end
+			until x
+			repeat
+				print("What is this station's Y coordinate?")
+				print("Use the location of this turtle.")
+				write("> ")
+				y = tonumber(read())
+				if not (y and y == math.floor(y) and y > 0) then
+					print("A valid positive integer is required!")
+					y = nil
+				end
+			until y
+			repeat
+				print("What is this station's Z coordinate?")
+				print("Use the location of this turtle.")
+				write("> ")
+				z = tonumber(read())
+				if not (z and z == math.floor(z)) then
+					print("A valid integer is required!")
+					z = nil
+				end
+			until z
+			loc = vector.new(x, y, z)
+		end
+		config.location = loc
+	end
+	local objectType
+	do
+		repeat
+			io.write("What type of object do this station's quadracoptors transport?\n")
+			io.write("item, fluid\n")
+			objectType = io.read()
+		until objectType == "item" or objectType == "fluid"
+	end
+	do
+		config.locations = {
+			{location = config.location + vector.new(0,1,0), capabilities = "fly-quad-"..objectType.."s"},
+		}
+	end
+	while true do
+		print("What is the name code for this base?")
+		print("Base name codes are used to group and differentiate sites.")
+		write("> ")
+		local baseCode = read()
+		if baseCode and #baseCode > 0 then
+			config.baseCode = baseCode
+			break
+		else
+			print("A base name code is required!")
+		end
+	end
+	configuration.save("flight.conf", config)
+end
+
+peripheral.find("modem", function(name) rednet.open(name) end)
+
+local stationInfo = {
+	type = "flight-base",
+	locations = config.locations,
+}
+
+base.initialize(config.baseCode, stationInfo)
+
+for i = 1, #config.locations do
+	local queue = flight.queue()
+	base.addFlightBase(queue, config.locations[i].location)
+end
+
+while true do
+	local event = {base.handleEvents(os.pullEventRaw())}
+	if event[1] == "terminate" then
+		print("Stopping")
+		return
+	end
+end
