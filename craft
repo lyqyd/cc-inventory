@@ -99,8 +99,8 @@ else
 		}
 	end
 	while true do
-		print("What is the base name code for this storage system?")
-		print("Base name codes are used to group and differentiate inventory system sites.")
+		print("What is the name code for this base?")
+		print("Base name codes are used to group and differentiate sites.")
 		write("> ")
 		local baseCode = read()
 		if baseCode and #baseCode > 0 then
