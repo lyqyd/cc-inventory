@@ -161,9 +161,15 @@ end
 local function chooseFlightBase(obj, from, to)
 	local str = keywords.capabilities.flight[obj]
 	if stationInfo[from.id].capabilities[str] then
-		return from.id, getBestBase(obj, from.id)
+		local fBase = flights[obj][from.id]
+		if fBase.count - #fBase.queue > 0 then
+			return from.id, getBestBase(obj, from.id)
+		end
 	elseif stationInfo[to.id].capabilities[str] then
-		return to.id, getBestBase(obj, to.id)
+		local fBase = flights[obj][to.id]
+		if fBase.count - #fBase.queue > 0 then
+			return to.id, getBestBase(obj, to.id)
+		end
 	else
 		local options = {}
 		for i, info in ipairs(stationInfo) do
