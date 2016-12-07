@@ -84,10 +84,7 @@ end
 
 local keywords = {
 	stations = {
-		flightOnly = {
-			item = "items-flight-base",
-			fluid = "fluids-flight-base",
-		},
+		flightOnly = "flight-base",
 		storage = {
 			item = "items-inventory",
 			fluid = "fluids-inventory",
@@ -170,7 +167,7 @@ local function chooseFlightBase(obj, from, to)
 	else
 		local options = {}
 		for i, info in ipairs(stationInfo) do
-			if info.type == keywords.stations.flightOnly[obj] then
+			if info.type == keywords.stations.flightOnly then
 				for _, baseInfo in ipairs(flights[obj][i]) do
 					if baseInfo.count - #baseInfo.queue > 0 then
 						table.insert(options, {id = i, base = baseInfo, distance = getDistance(from.location, baseInfo.location)})
