@@ -179,7 +179,7 @@ local function craft()
 					for i, info in ipairs(task.slots) do
 						--find total number of items to request.
 						if items[info.name] then
-							items[info.name][info.damage] = items[info.name][info.damage] + (items[info.name][info.damage] or 0)
+							items[info.name][info.damage] = (items[info.name][info.damage] or 0) + info.count
 						else
 							items[info.name] = {[info.damage] = info.count}
 						end
