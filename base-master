@@ -353,6 +353,17 @@ local function fillRequests()
 							if info.count == true then break end
 						end
 					end
+					--if we couldn't find any, craft some (if we're allowed to do that)
+					if total == 0 and (info.count ~= true or info.allowCrafting) then
+						for id, staInfo in pairs(stationInfo) do
+							if staInfo.type == "crafting-master" then
+								local count = info.count == true and 64 or info.count
+								local name, damage = normalizeName({combinedName = _name})
+								rednet.send(id, {type = "craft_object", objectType = objType, objectInfo = {name = name, damage = damage, count = count}, baseCode = config.baseCode}, "lyq-base-craft")
+								break
+							end
+						end
+					end
 				end
 			end
 		end
@@ -496,22 +507,33 @@ while true do
 				if not request[message.objectType][objectName][event[2]] then request[message.objectType][objectName][event[2]] = {} end
 				local list = request[message.objectType][objectName][event[2]]
 				local found = false
+				local info
 				if #list > 0 then
 					local loc = message.location
 					for i = 1, #list do
 						local listLoc = list[i].location
-						if listLoc.x == loc.x and listLoc.y == loc.y and listLoc.z == loc.z then
+						if areLocationsEqual(listLoc, loc) then
 							list[i].count = message.objectInfo.count
+							list[i].crafting = message.crafting or list[i].crafting
+							info = list[i]
 							found = true
 							break
 						end
 					end
 				end
 				if not found then
-					table.insert(request[message.objectType][objectName][event[2]], {location = message.location, count = message.objectInfo.count})
+					table.insert(list, {location = message.location, count = message.objectInfo.count, crafting = message.crafting})
+					info = list[#list]
 				end
-				if list.count == true and not list.total then
-					list.total = 0
+				if info.count == true and not info.total then
+					info.total = 0
+				end
+				if not info.crafting then
+					if info.count == true then
+						info.crafting = "none"
+					else
+						info.crafting = "allow"
+					end
 				end
 			elseif message.type == "flight_dispatched" then
 				local baseInfo = flightLookup.id
@@ -520,14 +542,19 @@ while true do
 				end
 			elseif message.type == "flight_arrived" then
 				local loc = message.location
+				local found = false
 				for type, ids in pairs(flights) do
 					for id, bases in pairs(ids) do
 						for i, info in ipairs(bases) do
 							if areLocationsEqual(info.location, loc) then
 								info.count = info.count + 1
+								found = true
+								break
 							end
 						end
+						if found then break end
 					end
+					if found then break end
 				end
 			end
 		elseif event[4] == "lyq-base-inv" and message.baseCode == config.baseCode then
