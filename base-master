@@ -8,6 +8,9 @@ local config = {
 		item = 64,
 		fluid = 1000,
 	},
+	tick = {
+		transport = 0.5,
+	}
 	baseCode = "",
 	databasePath = "/basedata",
 }
@@ -406,7 +409,7 @@ local function trimTables()
 	iterate(surplus)
 end
 
-
+tickTransport = os.startTimer(config.tick.transport)
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
@@ -531,6 +534,14 @@ while true do
 			if message.type == "all_items_info" then
 				storage.item[event[2]] = message.info
 			end
+		end
+	elseif event[1] == "timer" then
+		if event[2] == tickTransport then
+			fulfillRequestsFromSurplus()
+			storeSurplus()
+			fillRequests()
+			trimTables()
+			tickTransport = os.startTimer(config.tick.transport)
 		end
 	elseif event[1] == "terminate" then
 		io.write("Stopping\n")
