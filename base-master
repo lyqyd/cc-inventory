@@ -219,9 +219,9 @@ local function fulfillRequestsFromSurplus()
 					for id, list in pairs(stationList) do
 						for _, info in ipairs(list) do
 							if info.count == true then
-								table.insert(requesters.infinite, {id = id, location = info.location, total = info.total})
+								table.insert(requesters.infinite, {id = id, location = info.location, ref = info})
 							else
-								table.insert(requesters.limited, {id = id, location = info.location, count = info.count})
+								table.insert(requesters.limited, {id = id, location = info.location, ref = info})
 							end
 						end
 					end
@@ -231,28 +231,28 @@ local function fulfillRequestsFromSurplus()
 					local surpluses = {}
 					for id, list in pairs(surplus[type][name]) do
 						for _, info in ipairs(list) do
-							table.insert(surpluses, {id = id, location = info.location, count = info.count})
+							table.insert(surpluses, {id = id, location = info.location, ref = info})
 						end
 					end
 					table.sort(surpluses, function(a,b) return a.count < b.count end)
 					for i, info in ipairs(surpluses) do
-						while info.count > 0 do
+						while info.ref.count > 0 do
 							if #requesters.limited > 0 then
 								local requestInfo = requesters.limited[1]
-								local count = math.min(info.count, requestInfo.count)
+								local count = math.min(info.ref.count, requestInfo.ref.count)
 								local total = queueFlight(type, {combinedName = name, count = count}, {id = info.id, location = info.location}, {id = requestInfo.id, location = requestInfo.location})
-								info.count = info.count - total
-								requestInfo.count = requestInfo.count - total
-								if requestInfo.count == 0 then
+								info.ref.count = info.ref.count - total
+								requestInfo.ref.count = requestInfo.ref.count - total
+								if requestInfo.ref.count == 0 then
 									table.remove(requesters.limited, 1)
 								end
 							elseif #requesters.infinite > 0 then
 								table.sort(requesters.infinite, function(a,b) return a.total < b.total end)
 								local requestInfo = requesters.infinite[1]
-								local count = math.min(info.count, requestInfo.count)
+								local count = math.min(info.ref.count, 64)
 								local total = queueFlight(type, {combinedName = name, count = count}, {id = info.id, location = info.location}, {id = requestInfo.id, location = requestInfo.location})
-								info.count = info.count - total
-								requestInfo.total = requestInfo.total + total
+								info.ref.count = info.ref.count - total
+								requestInfo.ref.total = requestInfo.ref.total + total
 							else
 								--no more requesters.
 								break
@@ -355,6 +355,58 @@ local function fillRequests()
 		end
 	end
 end
+
+local function trimTables()
+	local function remove(tab, list)
+		local ref = tab
+		for i = #list, 1, -1 do
+			for j = 1, #list[i] - 1 do
+				ref = ref[list[i][j]]
+			end
+			ref[list[i][#list[i]]] = nil
+		end
+	end
+
+	local function iterate(tab)
+		local toRemove = {}
+		for objType, names in pairs(tab) do
+			local objEmpty = true
+			for _name, stationList in pairs(names) do
+				local nameEmpty = true
+				for id, list in pairs(stationList) do
+					local idEmpty = true
+					for i = #list, 1, -1 do
+						local info = list[i]
+						if info.count ~= true and info.count == 0 then
+							table.remove(list, i)
+						else
+							idEmpty = false
+						end
+					end
+					if idEmpty then
+						table.insert(toRemove, {objType, _name, id})
+					else
+						nameEmpty = false
+					end
+				end
+				remove(tab, toRemove)
+				toRemove = {}
+				if nameEmpty then
+					table.insert(toRemove, {objType, _name})
+				else
+					objEmpty = false
+				end
+			end
+			remove(tab, toRemove)
+			toRemove = {}
+		end
+	end
+
+	iterate(request)
+	iterate(surplus)
+end
+
+
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
