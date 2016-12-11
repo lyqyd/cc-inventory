@@ -37,7 +37,7 @@ else
 			local x, y, z
 			repeat
 				print("What is this station's X coordinate?")
-				print("Use the location of this turtle.")
+				print("Use the location of this computer.")
 				write("> ")
 				x = tonumber(read())
 				if not (x and x == math.floor(x)) then
@@ -47,7 +47,7 @@ else
 			until x
 			repeat
 				print("What is this station's Y coordinate?")
-				print("Use the location of this turtle.")
+				print("Use the location of this computer.")
 				write("> ")
 				y = tonumber(read())
 				if not (y and y == math.floor(y) and y > 0) then
@@ -57,7 +57,7 @@ else
 			until y
 			repeat
 				print("What is this station's Z coordinate?")
-				print("Use the location of this turtle.")
+				print("Use the location of this computer.")
 				write("> ")
 				z = tonumber(read())
 				if not (z and z == math.floor(z)) then
@@ -107,7 +107,7 @@ local stationInfo = {
 base.initialize(config.baseCode, stationInfo)
 
 for i = 1, #config.locations do
-	local queue = flight.queue()
+	local queue = flight.queue("top")
 	base.addFlightBase(queue, config.locations[i].location)
 end
 

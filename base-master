@@ -10,7 +10,7 @@ local config = {
 	},
 	tick = {
 		transport = 0.5,
-	}
+	},
 	baseCode = "",
 	databasePath = "/basedata",
 }
@@ -62,10 +62,18 @@ local stations = {}
 local stationInfo = {} --keyed by computer ID.
 local surplus = {} --keyed into groups (item, fluid), then by identifier (item name-damage, etc), then by station ID; list of locations.
 local request = {} --keyed into groups (item, fluid), then by identifier (item name-damage, etc), then by station ID; list of locations.
-local flights = {} --keyed into groups (item, fluid), then by station ID, then numerically-indexed with location, queue, count, and delta keys.
+local flights = {item = {}, fluid = {}} --keyed into groups (item, fluid), then by station ID, then numerically-indexed with location, queue, count, and delta keys.
 local flightLookup = {}
 local flightID = 0 --incremented for each flight, is unique base-wide
-local storage = {} --keyed into groups (item, fluid), then by station ID, then by name, then by damage, value is quantity of that object.
+local storage = {item = {}, fluid = {}} --keyed into groups (item, fluid), then by station ID, then by name, then by damage, value is quantity of that object.
+baseParameters = {
+	stationInfo = stationInfo,
+	surplus = surplus,
+	request = request,
+	flights = flights,
+	flightLookup = flightLookup,
+	storage = storage,
+}
 
 local clientProtocol = {
 	protocol = "lyq-base",
@@ -110,9 +118,11 @@ local keywordLookup = {}
 for class, words in pairs(keywords) do
 	keywordLookup[class] = {}
 	for word, types in pairs(words) do
-		keywordLookup[class][word] = {}
-		for obj, name in pairs(types) do
-			keywordLookup[class][word][name] = obj
+		if type(types) == "table" then
+			keywordLookup[class][word] = {}
+			for obj, name in pairs(types) do
+				keywordLookup[class][word][name] = obj
+			end
 		end
 	end
 end
@@ -175,7 +185,7 @@ local function chooseFlightBase(obj, from, to)
 		end
 	else
 		local options = {}
-		for i, info in ipairs(stationInfo) do
+		for i, info in pairs(stationInfo) do
 			if info.type == keywords.stations.flightOnly then
 				for _, baseInfo in ipairs(flights[obj][i]) do
 					if baseInfo.count - #baseInfo.queue > 0 then
@@ -197,7 +207,7 @@ local function queueFlight(objectType, objectInfo, origin, destination)
 		local count = math.min(objectInfo.count, config.maxFlightQuantity[objectType])
 		local newInfo = {count = count}
 		newInfo.name, newInfo.damage = normalizeName(objectInfo)
-		local route = flight.route(base, origin.location, destination.location, nil, newInfo.count, newInfo.name.." "..newInfo.damage)
+		local route = flight.route(base.location, origin.location, destination.location, nil, newInfo.count, newInfo.name.." "..newInfo.damage)
 		flightID = flightID + 1
 		table.insert(base.queue, {id = flightID, route = route, origin = origin, destination = destination, objectInfo = newInfo})
 		flightLookup[flightID] = base
@@ -245,6 +255,7 @@ local function fulfillRequestsFromSurplus()
 								local count = math.min(info.ref.count, requestInfo.ref.count)
 								local total = queueFlight(type, {combinedName = name, count = count}, {id = info.id, location = info.location}, {id = requestInfo.id, location = requestInfo.location})
 								info.ref.count = info.ref.count - total
+								info.ref.flag = nil
 								requestInfo.ref.count = requestInfo.ref.count - total
 								if requestInfo.ref.count == 0 then
 									table.remove(requesters.limited, 1)
@@ -274,13 +285,13 @@ local function storeSurplus()
 		for _name, stationList in pairs(names) do
 			for id, list in pairs(stationList) do
 				for _, info in ipairs(list) do
-					if not info.flag then
+					if info.count > 0 and not info.flag then
 						--select a storage facility and instruct it to request the objects.
 						local highCount, stationID = 0, -1
 						local name, damage = normalizeName({combinedName = _name})
 						for inv, stoInfo in pairs(storage[objType]) do
 							--pick the facility with the most of the item already in storage.
-							if stoInfo[name][damage] > highCount then
+							if stoInfo[name] and stoInfo[name][damage] and stoInfo[name][damage] > highCount then
 								highCount = stoInfo[name][damage]
 								stationID = inv
 							end
@@ -305,6 +316,7 @@ local function storeSurplus()
 						if stationID == -1 then
 							--failure to find a storage facility
 						else
+							print("Creating request for "..tostring(info.count).." of "..name.."-"..tostring(damage))
 							rednet.send(stationID, {type = "create_request", objectType = objType, objectInfo = {name = name, damage = damage, count = info.count}, baseCode = config.baseCode}, "lyq-base-inv")
 							--flag this surplus as destined for storage, so we don't attempt to store it again.
 							info.flag = true
@@ -322,46 +334,55 @@ local function fillRequests()
 		for _name, stationList in pairs(names) do
 			for id, list in pairs(stationList) do
 				for _, info in ipairs(list) do
-					--select a storage facility and instruct it to surplus the objects.
-					local total = 0
-					while info.count == true or total < info.count do
-						local lowCount, stationID = math.huge, -1
-						local name, damage = normalizeName({combinedName = _name})
-						for inv, stoInfo in pairs(storage[objType]) do
-							--pick the facility with the lowest quantity of the item in storage.
-							if stoInfo[name] then
-								local objectCount = stoInfo[name][damage]
-								if objectCount < lowCount and objectCount > 0 then
-									lowCount = objectCount
-									stationID = inv
+					if info.count > 0 and not  info.flag then
+						--select a storage facility and instruct it to surplus the objects.
+						local total = 0
+						if info.crafting == "none" or info.crafting == "allow" then
+							while info.count == true or total < info.count do
+								local lowCount, stationID = math.huge, -1
+								local name, damage = normalizeName({combinedName = _name})
+								for inv, stoInfo in pairs(storage[objType]) do
+									--pick the facility with the lowest quantity of the item in storage.
+									if stoInfo[name] then
+										local objectCount = stoInfo[name][damage]
+										if objectCount < lowCount and objectCount > 0 then
+											lowCount = objectCount
+											stationID = inv
+										end
+									end
+								end
+								if info.count ~= true then
+									lowCount = math.min(lowCount, info.count - total)
+								else
+									--build in a little safety for infinite consumers.
+									lowCount = math.min(lowCount, 64)
+								end
+								if stationID == -1 then
+									--failure to find a storage facility
+									break
+								else
+									print("Creating surplus of "..tostring(lowCount).." of "..name.."-"..tostring(damage))
+									rednet.send(stationID, {type = "create_surplus", objectType = objType, objectInfo = {name = name, damage = damage, count = lowCount}, baseCode = config.baseCode}, "lyq-base-inv")
+									total = total + lowCount
+									--more infinite consumer safety
+									if info.count == true then break end
 								end
 							end
 						end
-						if info.count ~= true then
-							lowCount = math.min(lowCount, info.count - total)
-						else
-							--build in a little safety for infinite consumers.
-							lowCount = math.min(lowCount, 64)
-						end
-						if stationID == -1 then
-							--failure to find a storage facility
-							break
-						else
-							rednet.send(stationID, {type = "create_surplus", objectType = objType, objectInfo = {name = name, damage = damage, count = lowCount}, baseCode = config.baseCode}, "lyq-base-inv")
-							total = total + lowCount
-							--more infinite consumer safety
-							if info.count == true then break end
-						end
-					end
-					--if we couldn't find any, craft some (if we're allowed to do that)
-					if total == 0 and (info.count ~= true or info.allowCrafting) then
-						for id, staInfo in pairs(stationInfo) do
-							if staInfo.type == "crafting-master" then
-								local count = info.count == true and 64 or info.count
-								local name, damage = normalizeName({combinedName = _name})
-								rednet.send(id, {type = "craft_object", objectType = objType, objectInfo = {name = name, damage = damage, count = count}, baseCode = config.baseCode}, "lyq-base-craft")
-								break
+						--if we couldn't find any, craft some (if we're allowed to do that)
+						if total == 0 and (info.crafting == "allow" or info.crafting == "require") then
+							for id, staInfo in pairs(stationInfo) do
+								if staInfo.type == "crafting-master" then
+									local count = info.count == true and 64 or info.count
+									local name, damage = normalizeName({combinedName = _name})
+									print("Crafting "..tostring(count).." of "..name.."-"..tostring(damage))
+									rednet.send(id, {type = "craft_object", objectType = objType, objectInfo = {name = name, damage = damage, count = count}, baseCode = config.baseCode}, "lyq-base-craft")
+									break
+								end
 							end
+						end
+						if total == info.count then
+							info.flag = true
 						end
 					end
 				end
@@ -372,11 +393,13 @@ end
 
 local function trimTables()
 	local function remove(tab, list)
-		local ref = tab
+		local ref
 		for i = #list, 1, -1 do
+			ref = tab
 			for j = 1, #list[i] - 1 do
 				ref = ref[list[i][j]]
 			end
+			print(#list[i], list[i][#list[i]])
 			ref[list[i][#list[i]]] = nil
 		end
 	end
@@ -420,6 +443,19 @@ local function trimTables()
 	iterate(surplus)
 end
 
+local function dispatchFlights()
+	for obj, stationList in pairs(flights) do
+		for id, bases in pairs(stationList) do
+			for _, base in ipairs(bases) do
+				for _, info in ipairs(base.queue) do
+					rednet.send(id, {type = "fly_route", id = info.id, route = info.route, location = base.location, baseCode = config.baseCode}, "lyq-base")
+				end
+				base.queue = {}
+			end
+		end
+	end
+end
+
 tickTransport = os.startTimer(config.tick.transport)
 
 while true do
@@ -454,21 +490,21 @@ while true do
 							if not flights[objectType][id] then flights[objectType][id] = {} end
 							local found = false
 							for j, info in ipairs(flights[objectType][id]) do
-								if sameLocation(info.location, loc) then
+								if areLocationsEqual(info.location, loc) then
 									found = true
 									break
 								end
 							end
 							if not found then
-								table.insert(flights[objectType][id], {location = loc, queue = {}, count = 0, delta = 0})
+								table.insert(flights[objectType][id], {location = loc.location, queue = {}, count = 0, delta = 0})
 							end
 						end
 					end
 				end
 				--see if this station is a storage station, grab the list of contents if it is
-				local storageKeyword = keywordLookup.station.storage[message.stationType]
+				local storageKeyword = keywordLookup.stations.storage[message.stationType]
 				if storageKeyword == "item" then
-					rednet.send(event[2], {type = "all_items_info", baseCode = config.baseCode},"lyq-base-inv")
+					rednet.send(event[2], {type = "all_items", baseCode = config.baseCode},"lyq-base-inv")
 				elseif storageKeyword == "fluid" then
 					--fluids lookup
 				end
@@ -489,14 +525,18 @@ while true do
 					local loc = message.location
 					for i = 1, #list do
 						local listLoc = list[i].location
-						if listLoc.x == loc.x and listLoc.y == loc.y and listLoc.z == loc.z then
-							list[i].count = message.objectInfo.count
+						if areLocationsEqual(listLoc, loc) then
+							--add these, since stations send surplus messages whenever they dump something for pickup.
+							write("Updating surplus of "..message.objectInfo.name)
+							list[i].count = list[i].count + message.objectInfo.count
+							print(" to "..tostring(list[i].count))
 							found = true
 							break
 						end
 					end
 				end
 				if not found then
+					print("Recording surplus of "..tostring(message.objectInfo.count).." of "..message.objectInfo.name.."-"..message.objectInfo.damage)
 					table.insert(surplus[message.objectType][objectName][event[2]], {location = message.location, count = message.objectInfo.count})
 				end
 			elseif message.type == "object_required" then
@@ -513,6 +553,7 @@ while true do
 					for i = 1, #list do
 						local listLoc = list[i].location
 						if areLocationsEqual(listLoc, loc) then
+							--update these, since stations update these as they change.
 							list[i].count = message.objectInfo.count
 							list[i].crafting = message.crafting or list[i].crafting
 							info = list[i]
@@ -522,6 +563,7 @@ while true do
 					end
 				end
 				if not found then
+					print("Recording request of "..tostring(message.objectInfo.count).." of "..message.objectInfo.name.."-"..message.objectInfo.damage)
 					table.insert(list, {location = message.location, count = message.objectInfo.count, crafting = message.crafting})
 					info = list[#list]
 				end
@@ -533,6 +575,29 @@ while true do
 						info.crafting = "none"
 					else
 						info.crafting = "allow"
+					end
+				end
+			elseif message.type == "flight_base_info" then
+				for id, info in pairs(stationInfo) do
+					for _, loc in ipairs(info.locations) do
+						if areLocationsEqual(message.info.location, loc.location) then
+							local word = keywordLookup.capabilities.flight[loc.capabilities]
+							if word then
+								if not flights[word][event[2]] then flights[word][event[2]] = {} end
+								local found = false
+								for baseNum, baseInfo in ipairs(flights[word][event[2]]) do
+									if areLocationsEqual(message.info.location, baseInfo.location) then
+										baseInfo.count = message.info.count
+										found = true
+										break
+									end
+								end
+								if not found then
+									table.insert(flights[word][event[2]], message.info)
+									break
+								end
+							end
+						end
 					end
 				end
 			elseif message.type == "flight_dispatched" then
@@ -568,6 +633,7 @@ while true do
 			storeSurplus()
 			fillRequests()
 			trimTables()
+			dispatchFlights()
 			tickTransport = os.startTimer(config.tick.transport)
 		end
 	elseif event[1] == "terminate" then

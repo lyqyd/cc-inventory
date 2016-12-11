@@ -1,4 +1,5 @@
 --flight api
+local unpack = unpack or table.unpack
 
 local shortFlightDistance = 6
 local stepDistance = 48
@@ -55,25 +56,29 @@ local function pointToPoint(a, b)
 	local height = a.y
 	local route, n = {}, 0
 	local info = {short = {total = 0}, long = {total = 0}}
-	local info.long.name, info.long.dist, info.short.name, info.short.dist = getDirections(a, b)
+	info.long.name, info.long.dist, info.short.name, info.short.dist = getDirections(a, b)
 	local longFlight = horizontalDistance(a, b) > shortFlightDistance
 	if longFlight then
-		local steps = math.ceil(longDist / stepDistance)
+		local steps = math.ceil(info.long.dist / stepDistance)
 
 		local function adjustHeight(dirName, curHeight)
+			local delta = 0
 			if curHeight ~= flightLevels[dirName] then
-				local delta = flightLevels[dirName] - curHeight
+				delta = flightLevels[dirName] - curHeight
 				n = n + 1
-				route[n] = directions.y[delta / math.abs(delta)].." "..tostring(delta)
+				route[n] = directions.y[delta / math.abs(delta)].." "..tostring(math.abs(delta))
 			end
+			return curHeight + delta
 		end
 
 		local function step(info, _dist)
-			adjustHeight(info.name, height)
 			local dist = _dist or math.floor(info.dist / steps)
-			n = n + 1
-			route[n] = info.name.." "..tostring(step)
-			info.total = info.total + dist
+			if dist > 0 then
+				height = adjustHeight(info.name, height)
+				n = n + 1
+				route[n] = info.name.." "..tostring(dist)
+				info.total = info.total + dist
+			end
 		end
 		
 		for i = 1, steps do
@@ -85,16 +90,26 @@ local function pointToPoint(a, b)
 				step(info.short)
 			end
 		end
+
+		if height ~= b.y then
+			local delta = b.y - height
+			n = n + 1
+			route[n] = directions.y[delta / math.abs(delta)].." "..tostring(math.abs(delta))
+		end
 	else
 		local flyHeight = math.max(a.y, b.y)
 		if flyHeight > a.y then
 			n = n + 1
 			route[n] = directions.y[1].." "..tostring(flyHeight - a.y)
 		end
-		n = n + 1
-		route[n] = info.long.name.." "..tostring(info.long.dist)
-		n = n + 1
-		route[n] = info.short.name.." "..tostring(info.short.dist)
+		if info.long.dist > 0 then
+			n = n + 1
+			route[n] = info.long.name.." "..tostring(info.long.dist)
+		end
+		if info.short.dist > 0 then
+			n = n + 1
+			route[n] = info.short.name.." "..tostring(info.short.dist)
+		end
 		if flyHeight > b.y then
 			n = n + 1
 			route[n] = directions.y[-1].." "..tostring(flyHeight - b.y)
@@ -128,27 +143,30 @@ local Queue = {
 	handleEvents = function(self, ...)
 		local event = {...}
 		if event[1] == "timer" and event[2] == self.timer then
-			local count = peripheral.call(self.side, "getQuadCount")
-			if count < 1 then
-				self.timer = os.startTimer(self.spacing)
-				return "no_quads", self.side
-			elseif count < self.low then
-				os.queueEvent("low_quads", self.side)
-			end
-			local info = table.remove(self.queue, 1)
-			peripheral.call(self.side, "flyQuad", info.route)
 			if #self.queue > 0 then
+				local count = peripheral.call(self.side, "getQuadCount")
+				if count < 1 then
+					self.timer = os.startTimer(self.spacing)
+					return "no_quads"
+				elseif count < self.low then
+					os.queueEvent("low_quads")
+				end
+				local info = table.remove(self.queue, 1)
+				peripheral.call(self.side, "flyQuad", info.route)
+				--allow an additional timer event to space out the next flight, even if we've just emptied the queue.
 				self.timer = os.startTimer(self.spacing)
+				return "route_depart", self.side, info
 			else
 				self.timer = -1
 			end
-			return "route_depart", self.side, info
 		end
+		return unpack(event)
 	end,
 	add = function(self, routeInfo)
 		table.insert(self.queue, routeInfo)
 		if self.timer == -1 then
-			self.timer = os.startTimer(self.spacing)
+			--this can be safely set for immediate expiration, since the timer following our last flight has expired.
+			self.timer = os.startTimer(0)
 		end
 	end,
 }

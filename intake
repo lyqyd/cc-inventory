@@ -1,5 +1,5 @@
---crafting unit
---this program is a dispatchable crafter for the base inventory system.
+--intake unit
+--this program is a simple intake system. items are placed in the turtle, then the turtle dumps them in the chest in front of it and calls for a pickup.
 
 --initial configuration defaults
 local config = {
@@ -11,16 +11,13 @@ local config = {
 	locations = {},
 }
 
-local slotMap = {5, 6, 7, 9, 10, 11, 13, 14, 15}
-
 if not os.loadAPI("base") then error("Could not load base API!") end
-if not os.loadAPI("flight") then error("Could not load flight API!") end
 if not os.loadAPI("configuration") then error("Could not load configuration API!") end
-if fs.exists("craft.conf") then
-	config = configuration.load("craft.conf")
+if fs.exists("intake.conf") then
+	config = configuration.load("intake.conf")
 else
 	--initial setup
-	print("Initial Setup for Crafting Unit")
+	print("Initial Setup for Intake Unit")
 	while not os.getComputerLabel() do
 		print("Please provide a label for this computer.")
 		write("> ")
@@ -71,7 +68,7 @@ else
 		config.location = loc
 	end
 	while true do
-		print("Which direction does this crafting station face?")
+		print("Which direction does this intake station face?")
 		print("Determine the direction by standing behind the turtle and looking in the direction it faces.")
 		print("Enter 1 - 4, corresponding to the correct direction:")
 		print("1. north      2. east")
@@ -94,8 +91,6 @@ else
 		}
 		config.locations = {
 			{location = config.location + facingVec[config.facing][1], capabilities = "output-items"},
-			{location = config.location, capabilities = "accept-items"},
-			{location = config.location + facingVec[config.facing][2], capabilities = "fly-quad-items"},
 		}
 	end
 	while true do
@@ -110,22 +105,7 @@ else
 			print("A base name code is required!")
 		end
 	end
-	configuration.save("craft.conf", config)
-end
-
-local task
-
-local function checkSlots()
-	for i = 1, 9 do
-		local item = turtle.getItemDetail(slotMap[i])
-		local info = task.slots[i]
-		if info then
-			if (not item) or info.name ~= item.name or info.damage ~= item.damage or info.count * task.total / task.product ~= item.count then
-				return false
-			end
-		end
-	end
-	return true
+	configuration.save("intake.conf", config)
 end
 
 local function surplus(i)
@@ -139,22 +119,12 @@ end
 
 peripheral.find("modem", function(name) rednet.open(name) end)
 
-local serviceProtocol = {
-	protocol = "lyq-base-craft",
-	name = "crafting",
-	online = "crafter_online",
-	offline = "crafter_offline",
-}
-
 local stationInfo = {
-	type = "items-crafter",
+	type = "items-intake",
 	locations = config.locations,
 }
 
-base.initialize(config.baseCode, stationInfo, serviceProtocol)
-
-local queue = flight.queue("back")
-base.addFlightBase(queue, config.locations[3].location)
+base.initialize(config.baseCode, stationInfo)
 
 local function communicate()
 	while true do
@@ -166,67 +136,15 @@ local function communicate()
 	end
 end
 
-local function craft()
+local function dump()
 	while true do
 		local event = {os.pullEventRaw()}
-		if event[1] == "rednet_message" and event[4] == "lyq-base-craft" then
-			if event[2] == base.getServiceMaster() then
-				if event[3].event == "crafting_task" then
-					task = event[3].task
-					turtle.select(1)
-					--create demand for items
-					local items = {}
-					for i, info in ipairs(task.slots) do
-						--find total number of items to request.
-						if items[info.name] then
-							items[info.name][info.damage] = (items[info.name][info.damage] or 0) + info.count
-						else
-							items[info.name] = {[info.damage] = info.count}
-						end
-					end
-					for name, damages in pairs(items) do
-						for damage, count in pairs(damages) do
-							base.sendToBaseMaster({type = "object_required", objectType = "item", objectInfo = {name = name, damage = damage, count = count}, location = config.locations[2].location})
-						end
-					end
-				end
-			end
-		elseif event[1] == "turtle_inventory" then
-			for i = 1, 4 do
-				turtle.select(i)
-				local item = turtle.getItemDetail(i)
-				if task and item then
-					local total = 0
-					for j, info in ipairs(task.slots) do
-						if info.name == item.name and info.damage == item.damage then
-							local count = math.min(info.count * task.total / task.product, item.count - total)
-							turtle.transferTo(slotMap[j], count)
-							total = total + count
-							if total == item.count then break end
-						end
-					end
-
-					if checkSlots() then
-						turtle.select(12)
-						turtle.craft(task.product)
-						surplus(12)
-						task = nil
-						for j = 1, 9 do
-							surplus(slotMap[j])
-						end
-						base.sendToServiceMaster({type = "task_complete"})
-					end
-				elseif item then
-					surplus(i)
-				end
-			end
-			if not task then
-				for i = 5, 16 do
-					surplus(i)
-				end
+		if event[1] == "turtle_inventory" then
+			for i = 1, 16 do
+				surplus(i)
 			end
 		end
 	end
 end
 
-parallel.waitForAny(communicate, craft)
+parallel.waitForAny(communicate, dump)
