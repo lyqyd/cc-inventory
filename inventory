@@ -32,10 +32,10 @@ local config = {
 			{7, 1},
 		},
 		--master coords used to transform gps coordinates and base coordinates for actual pick-up and drop-off coords.
-		master = {5, 6},
+		master = {7, 6},
 	},
 	retrievalFlightDelay = 1,
-	intakeFlightDelay = 0.4,
+	intakeFlightDelay = 0.6,
 	storageBlocks = {
 		{
 			name = "minecraft:chest",
@@ -46,8 +46,14 @@ local config = {
 	locations = {},
 	baseCode = "",
 	databasePath = "/storagedata",
+	counters = {},
+	bases = {},
+	storageSide = "right",
+	retrievalSide = "left",
+	quadSide = "back",
 }
 
+local directionNames = {"north", "east", "south", "west"}
 local baseRotations = {
 	{1, 2, 3, 4},
 	{4, 1, 2, 3},
@@ -58,8 +64,8 @@ local baseRotations = {
 if not os.loadAPI("base") then error("Could not load base API!") end
 if not os.loadAPI("flight") then error("Could not load flight API!") end
 if not os.loadAPI("configuration") then error("Could not load configuration API!") end
-if fs.exists("master.conf") then
-	config = configuration.load("master.conf")
+if fs.exists("inventory.conf") then
+	config = configuration.load("inventory.conf")
 else
 	--initial setup
 	print("Initial Setup for Master Storage Controller")
@@ -73,6 +79,88 @@ else
 		else
 			print("A label is required!")
 		end
+	end
+	local counters, bases
+
+	local function grabRemotePeripherals(periph)
+		local p = peripheral.call("bottom", "getNamesRemote")
+		local r, n = {}, 0
+		for i = 1, #p do
+			if peripheral.getType(p[i]) == periph then
+				n = n + 1
+				r[n] = p[i]
+			end
+		end
+		return r
+	end
+
+	repeat
+		print("Finding counter peripherals.")
+		if peripheral.getType("bottom") == "modem" then
+			counters = grabRemotePeripherals("counter")
+		else
+			counters = {}
+		end
+		if #counters < 1 then
+			print("Please attach at least one counter peripheral to the network.")
+			sleep(5)
+		elseif #counters > 4 then
+			print("Too many counters on the network!  Please attach no more than 4 (one per outside wall).")
+			sleep(5)
+		end
+	until #counters >= 1 and #counters <= 4
+	for i = 1, #counters do
+		print("Which wall is "..counters[i].." located on?")
+		for i = 1, 4 do
+			if not config.counters[i] then
+				print(i..". "..directionNames[i])
+			end
+		end
+		local answer
+		repeat
+			write("> ")
+			answer = tonumber(read())
+			if answer and config.counters[answer] == nil then
+				config.counters[answer] = counters[i]
+				break
+			else
+				answer = nil
+			end
+		until answer
+	end
+	repeat
+		print("Finding quadracoptor base peripherals.")
+		if peripheral.getType("bottom") == "modem" then
+			bases = grabRemotePeripherals("quadbase")
+		else
+			bases = {}
+		end
+		print("Finding quadracoptor base peripherals.")
+		peripheral.find("quadbase", b)
+		if #bases ~= #counters then
+			print("Please attach to the network one quadracoptor base for each counter peripheral.")
+			sleep(5)
+		end
+	until #bases == #counters
+	for i = 1, #bases do
+		print("Which wall is "..bases[i].." located on?")
+		for i = 1, 4 do
+			if config.counters[i] and not config.bases[i] then
+				print(i..". "..directionNames[i])
+			end
+		end
+		local answer
+		repeat
+			write("> ")
+			answer = tonumber(read())
+			if answer and config.counters[answer] and config.bases[answer] == nil then
+				config.bases[answer] = bases[i]
+				break
+			else
+				answer = nil
+			end
+			print("Please select a valid option.")
+		until answer
 	end
 	do
 		local loc = vector.new(gps.locate())
@@ -153,7 +241,7 @@ else
 				fVec = facingVec[config.facing]
 				inVec = vector.new(inVec.x * fVec.x, inVec.y * fVec.y, inVec.z * fVec.z)
 				outVec = vector.new(outVec.x * fVec.x, outVec.y * fVec.y, outVec.z * fVec.z)
-				config.locations[baseRotations[config.facing[i]]] = {
+				config.locations[baseRotations[config.facing][i]] = {
 					{location = config.location + inVec, capabilities = "accept-items"},
 					{location = config.location + outVec, capabilities = "output-items"},
 				}
@@ -172,19 +260,22 @@ else
 			print("A base name code is required!")
 		end
 	end
-	configuration.save("master.conf", config)
+	configuration.save("inventory.conf", config)
 end
 if not os.loadAPI("storage") then error("Could not load storage API!") end
 storage.initialize(config)
 
-peripheral.find("modem", function(name) rednet.open(name) end)
-
-if os.getComputerLabel() then
-	rednet.host("lyq-inv", os.getComputerLabel())
-else
-	print("You must label this computer first.")
-	return
+local counterLookup, baseLookup = {}, {}
+for i = 1, 4 do
+	if config.counters[i] then
+		counterLookup[config.counters[i]] = i
+	end
+	if config.bases[i] then
+		counterLookup[config.bases[i]] = i
+	end
 end
+
+peripheral.find("modem", function(name) rednet.open(name) end)
 
 local itemsStored = 0
 local storeControl, sortControl, construction
@@ -192,27 +283,19 @@ local clients = {}
 local routeQueue = {}
 --intake and retrieve are flight queues.
 local queues = {
-	intake = flight.queue(nil, config.intakeFlightDelay),
-	retrieve = flight.queue(nil, config.retrievalFlightDelay),
+	intake = {},
+	output = {},
+	retrieve = flight.queue("back", config.retrievalFlightDelay),
+	store = flight.queue("back", 0),
 	request = {{}, {}, {}, {}},
-	output = {{}, {}, {}, {}},
+	surplus = {{}, {}, {}, {}},
 }
 expose = queues
 
-queues.intake.dispatch = function(self)
-	if sortControl and storeControl then
-		print("dispatching")
-		local info = table.remove(self.queue, 1)
-		rednet.send(sortControl, {type = "fly_route", route = info.route, side = info.side}, "lyq-inv")
-		self.timer = os.startTimer(self.spacing)
-	end
-end
-
-queues.retrieve.dispatch = function(self)
-	if sortControl and storeControl then
-		local info = table.remove(self.queue, 1)
-		rednet.send(storeControl, {type = "fly_route", route = info.route}, "lyq-inv")
-		self.timer = os.startTimer(self.spacing)
+for i = 1, 4 do
+	if config.bases[i] then
+		queues.intake[i] = flight.queue(config.bases[i], config.intakeFlightDelay)
+		queues.output[i] = flight.queue(config.bases[i], 0)
 	end
 end
 
@@ -243,8 +326,6 @@ local function checkRemainingSpace()
 	end
 	itemsStored = 0
 end
-
-local keepAliveTimer, keepAliveStatus = os.startTimer(5), {false, false, false}
 
 local stationInfo = {
 	type = "items-inventory",
@@ -279,59 +360,21 @@ local clientProtocol = {
 }
 
 base.initialize(config.baseCode, stationInfo, nil, clientProtocol)
-base.addFlightBase(queues.intake)
 base.addFlightBase(queues.retrieve)
+base.addFlightBase(queues.store)
+for i = 1, 4 do
+	if queues.intake[i] then
+		base.addFlightBase(queues.intake[i])
+		base.addFlightBase(queues.output[i])
+	end
+end
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
-	storeControl, sortControl, construction = (base.getClientByType("storage_online")), (base.getClientByType("sorting_online")), (base.getClientByType("construction_online"))
 	if event[1] == "rednet_message" then
 		if event[4] == "lyq-inv" then
 			local message = event[3]
-			if message.type == "store" and event[2] == storeControl then
-				print("Storing "..tostring(message.info.count).." of "..message.info.name.."-"..message.info.damage)
-				storage.store(message.info, function(route) rednet.send(storeControl, {type = "fly_route", route = route}, "lyq-inv") end)
-				itemsStored = itemsStored + 1
-				checkRemainingSpace()
-			elseif message.type == "retrieve" and event[2] == storeControl then
-				print("Retrieved "..tostring(message.info.count).." of "..message.info.name.."-"..message.info.damage)
-				local found = false
-				for j = 1, math.max(#queues.output[1], #queues.output[2], #queues.output[3], #queues.output[4]) do
-					for i = 1, 4 do
-						local info = queues.output[i][j]
-						if info and info.name == message.info.name and info.damage == message.info.damage and (info.count == message.info.count or (info.count > 64 and message.info.count == 64) or message.info.count == info.count % 64) then
-							info.count = info.count - message.info.count
-							local route = storage.createOutputRoute(i)
-							table.insert(route, 1, i)
-							rednet.send(sortControl, {type = "fly_route", route = route}, "lyq-inv")
-							if info.count == 0 then
-								table.remove(queues.output[i], j)
-								base.sendToBaseMaster({type = "object_surplus", objectType = "item", objectInfo = {name = info.name, damage = info.damage, count = info.total}, location = config.locations[i][2].location})
-							end
-							found = true
-							break
-						end
-					end
-					if found then break end
-				end
-			elseif message.type == "item_arrived" and event[2] == sortControl then
-				print("Received "..tostring(message.info.count).." of "..message.info.name.."-"..message.info.damage)
-				local route = storage.createIntakeRoute(message.side)
-				local info = {route = route, side = message.side}
-				queues.intake:add(info)
-				if #queues.request[message.side] > 0 then
-					for i = 1, #queues.request[message.side] do
-						local info = queues.request[message.side][i]
-						if info and info.name == message.info.name and info.damage == message.info.damage and (info.count == message.info.count or (info.count > 64 and message.info.count == 64) or message.info.count == info.count % 64)  then
-							info.count = info.count - message.info.count
-							if info.count == 0 then
-								table.remove(queues.request[message.side], i)
-							end
-							break
-						end
-					end
-				end
-			elseif message.type == "layer_complete" then
+			if message.type == "layer_complete" then
 				config.layers = config.layers + 2
 				configuration.save("master.conf", config)
 				storage.addLayers(message.block, 2)
@@ -347,8 +390,8 @@ while true do
 				local queueMin, queueChoice = math.huge, -1
 				for i = 1, 4 do
 					local count = 0
-					for j = 1, #queues.output[i] do
-						count = count + queues.output[i][j].count
+					for j = 1, #queues.surplus[i] do
+						count = count + queues.surplus[i][j].count
 					end
 					if count < queueMin then
 						queueMin = count
@@ -356,15 +399,15 @@ while true do
 					end
 				end
 				itemData.total = itemData.count
-				table.insert(queues.output[queueChoice], itemData)
+				table.insert(queues.surplus[queueChoice], itemData)
 				print("Retrieving "..tostring(itemData.count).." of "..itemData.name.."-"..itemData.damage)
 				local success, count = storage.retrieve(itemData, function(route) queues.retrieve:add({route = route}) end)
 				if not success then
 					print("Couldn't retrieve "..count.." items.")
-					local queueInfo = queues.output[queueChoice][#queues.output[queueChoice]]
+					local queueInfo = queues.surplus[queueChoice][#queues.surplus[queueChoice]]
 					queueInfo.count = queueInfo.count - count
 					if queueInfo.count == 0 then
-						queues.output[queueChoice][#queues.output[queueChoice]] = nil
+						queues.surplus[queueChoice][#queues.surplus[queueChoice]] = nil
 					end
 				end
 			elseif message.type == "create_request" then
@@ -389,6 +432,53 @@ while true do
 			elseif message.type == "unused_layers" then
 			elseif message.type == "item_density" then
 				rednet.send(event[2], {type = "item_density_percent", info = storage.calculateItemDensity(), baseCode = config.baseCode}, "lyq-base-inv")
+			end
+		end
+	elseif event[1] == "item_count" then
+		local side, name, damage, count = event[2], event[3], event[4], event[5]
+		if side == config.storageSide then
+			print("Storing "..tostring(count).." of "..name.."-"..damage)
+			storage.store({name = name, damage = damage, count = count}, function(route) queues.store:add({route = route}) end)
+			itemsStored = itemsStored + 1
+			checkRemainingSpace()
+		elseif event[2] == config.retrievalSide then
+			print("Retrieved "..tostring(count).." of "..name.."-"..damage)
+			local found = false
+			for j = 1, math.max(#queues.surplus[1], #queues.surplus[2], #queues.surplus[3], #queues.surplus[4]) do
+				for i = 1, 4 do
+					local info = queues.surplus[i][j]
+					if info and info.name == name and info.damage == damage and (info.count == count or (info.count > 64 and count == 64) or count == info.count % 64) then
+						info.count = info.count - count
+						local route = storage.createOutputRoute(i)
+						queues.output[i]:add({route = route})
+						if info.count == 0 then
+							table.remove(queues.surplus[i], j)
+							base.sendToBaseMaster({type = "object_surplus", objectType = "item", objectInfo = {name = info.name, damage = info.damage, count = info.total}, location = config.locations[i][2].location})
+						end
+						found = true
+						break
+					end
+				end
+				if found then break end
+			end
+		else
+			--one of the four sorting sides
+			local side = counterLookup[side]
+			print("Received "..tostring(count).." of "..name.."-"..damage)
+			local route = storage.createIntakeRoute(side)
+			local info = {route = route}
+			queues.intake[side]:add(info)
+			if #queues.request[side] > 0 then
+				for i = 1, #queues.request[side] do
+					local info = queues.request[side][i]
+					if info and info.name == name and info.damage == damage and (info.count == count or (info.count > 64 and count == 64) or count == info.count % 64)  then
+						info.count = info.count - count
+						if info.count == 0 then
+							table.remove(queues.request[side], i)
+						end
+						break
+					end
+				end
 			end
 		end
 	elseif event[1] == "terminate" then
