@@ -137,12 +137,19 @@ local function communicate()
 end
 
 local function dump()
-	while true do
-		local event = {os.pullEventRaw()}
-		if event[1] == "turtle_inventory" then
-			for i = 1, 16 do
+	local function dropAll()
+		for i = 1, 16 do
+			if turtle.getItemCount(i) > 0 then
 				surplus(i)
 			end
+		end
+	end
+
+	while true do
+		dropAll()
+		local event = {os.pullEventRaw()}
+		if event[1] == "turtle_inventory" then
+			dropAll()
 		end
 	end
 end
