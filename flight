@@ -199,9 +199,9 @@ function queue(side, time, threshold)
 		local count = peripheral.call(self.side, "getQuadCount")
 		if count < 1 then
 			self.timer = os.startTimer(self.spacing)
-			return "no_quads"
+			return "no_quads", self.side
 		elseif count < self.low then
-			os.queueEvent("low_quads")
+			os.queueEvent("low_quads", self.side)
 		end
 		local info = table.remove(self.queue, 1)
 		peripheral.call(self.side, "flyQuad", info.route)
