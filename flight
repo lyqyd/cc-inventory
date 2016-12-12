@@ -34,10 +34,9 @@ local function concatenate(a, b)
 	--fast table concatenation, appends the numerically-indexed contents of b to a.
 	local n = #a
 	for i = 1, #b do
-		n = n + 1
-		a[n] = b[i]
+		a[n + i] = b[i]
 	end
-	return n
+	return #a
 end
 
 local function getDirections(a, b)
