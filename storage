@@ -41,11 +41,44 @@ local direction = {
 	{"west", "north", "east", "south"},
 }
 
+local directions = {
+	x = {
+		{[1] = "east", [-1] = "west"},
+		{[1] = "south", [-1] = "north"},
+		{[1] = "west", [-1] = "east"},
+		{[1] = "north", [-1] = "south"},
+	},
+	y = {
+		[1] = "up",
+		[-1] = "down",
+	},
+	z = {
+		{[1] = "south", [-1] = "north"},
+		{[1] = "west", [-1] = "east"},
+		{[1] = "north", [-1] = "south"},
+		{[1] = "east", [-1] = "west"},
+	},
+}
+
+local flightLevels = {
+	north = 92,
+	east = 93,
+	south = 93,
+	west = 92,
+}
+
 local baseRotations = {
 	{1, 2, 3, 4},
 	{4, 1, 2, 3},
 	{3, 4, 1, 2},
 	{2, 3, 4, 1},
+}
+
+local transformVec = {
+	{vector.new(-2, 0, 1), vector.new(-2, 0, -1)},
+	{vector.new(1, 0, 2), vector.new(-1, 0, 2)},
+	{vector.new(2, 0, -1), vector.new(2, 0, 1)},
+	{vector.new(-1, 0, -2), vector.new(1, 0, -2)},
 }
 
 local storageInfo = {}
@@ -176,170 +209,150 @@ function addLayers(storageBlock, count)
 	return false
 end
 
-local function routeWithCoords(route, from, to, colFirst)
-	local firstFrom, firstTo, secondFrom, secondTo
-	local firstDirLess, firstDirMore, secondDirLess, secondDirMore
-	if colFirst then
-		firstFrom, secondFrom = from[2], from[1]
-		firstTo, secondTo = to[2], to[1]
-		firstDirLess, firstDirMore = 2, 4
-		secondDirLess, secondDirMore = 3, 1
-	else
-		firstFrom, secondFrom = from[1], from[2]
-		firstTo, secondTo = to[1], to[2]
-		firstDirLess, firstDirMore = 3, 1
-		secondDirLess, secondDirMore = 2, 4
-	end
-	--!! UNFINISHED !!
+
+local function horizontalDistance(a, b)
+	return math.sqrt((b.x - a.x)^2 + (b.z - a.z)^2)
 end
 
---NESW
+local function concatenate(a, b)
+	--fast table concatenation, appends the numerically-indexed contents of b to a.
+	local n = #a
+	for i = 1, #b do
+		a[n + i] = b[i]
+	end
+	return #a
+end
+
+local function getDirections(a, b)
+	local xDir = b.x - a.x
+	local xName = directions.x[config.facing][xDir / math.abs(xDir)]
+	local zDir = b.z - a.z
+	local zName = directions.z[config.facing][zDir / math.abs(zDir)]
+	if math.abs(xDir) >= math.abs(zDir) then
+		return xName, math.abs(xDir), zName, math.abs(zDir)
+	else
+		return zName, math.abs(zDir), xName, math.abs(xDir)
+	end
+end
+
+local function pointToPoint(a, b, shortFirst)
+	local route, n = {}, 0
+	local info = {short = {total = 0}, long = {total = 0}}
+	info.long.name, info.long.dist, info.short.name, info.short.dist = getDirections(a, b)
+	if shortFirst then
+		if info.short.dist > 0 then
+			n = n + 1
+			route[n] = info.short.name.." "..tostring(info.short.dist)
+		end
+	end
+	if info.long.dist > 0 then
+		n = n + 1
+		route[n] = info.long.name.." "..tostring(info.long.dist)
+	end
+	if not shortFirst then
+		if info.short.dist > 0 then
+			n = n + 1
+			route[n] = info.short.name.." "..tostring(info.short.dist)
+		end
+	end
+	return route
+end
+
+local function moveToChest(start, chest, finish, action)
+	local route, n = {}, 0
+	local function getRowAndColumn(a, b)
+		local xDir = b.x - a.x
+		local xName = directions.x[config.facing][xDir / math.abs(xDir)]
+		local zDir = b.z - a.z
+		local zName = directions.z[config.facing][zDir / math.abs(zDir)]
+		return xName, math.abs(xDir), zName, math.abs(zDir)
+	end
+	info = {row = {}}, column = {}}
+	info.row.name, info.row.dist, info.column.name, info.column.dist = getRowAndColumn(start, chest)
+	if info.row.dist > 0 then
+		n = n + 1
+		route[n] = info.row.name.." "..info.row.dist
+	end
+	n = n + 1
+	route[n] = info.column.name.." "..info.column.dist
+	n = n + 1
+	route[n] = action
+	info.row.name, info.row.dist, info.column.name, info.column.dist = getRowAndColumn(chest, finish)
+	n = n + 1
+	route[n] = info.column.name.." "..info.column.dist
+	if info.row.dist > 0 then
+		n = n + 1
+		route[n] = info.row.name.." "..info.row.dist
+	end
+	return route
+end
+
 function createStorageRoute(layer, row, column, count)
-	local route = {}
-	route[#route + 1] = direction[config.facing][4]
-	route[#route + 1] = direction[config.facing][1]
-	route[#route + 1] = "suck "..tostring(count)
-	route[#route + 1] = direction[config.facing][1]
-	route[#route + 1] = "down "..tostring(layer + 5)
-	local rowCoord, colCoord
-	local layerMod = layer % #config.layout.layers
-	if layerMod == 0 then layerMod = #config.layout.layers end
-	colCoord = config.layout.layers[layerMod][column]
-	rowCoord = config.layout.rows[row]
-	local shaftRow, shaftCol = config.layout.shafts[1][1], config.layout.shafts[1][2]
-	if colCoord > shaftCol then
-		route[#route + 1] = direction[config.facing][2].." "..tostring(colCoord - shaftCol)
-	elseif colCoord < shaftCol then
-		route[#route + 1] = direction[config.facing][4].." "..tostring(shaftCol - colCoord)
-	end
-	if rowCoord > shaftRow then
-		route[#route + 1] = direction[config.facing][3].." "..tostring(rowCoord - shaftRow)
-	elseif rowCoord < shaftRow then
-		route[#route + 1] = direction[config.facing][1].." "..tostring(shaftRow - rowCoord)
-	end
-	route[#route + 1] = "drop "..tostring(count)
-	if rowCoord > shaftRow then
-		route[#route + 1] = direction[config.facing][1].." "..tostring(rowCoord - shaftRow)
-	elseif rowCoord < shaftRow then
-		route[#route + 1] = direction[config.facing][3].." "..tostring(shaftRow - rowCoord)
-	end
-	shaftCol = config.layout.shafts[2][2]
-	if colCoord > shaftCol then
-		route[#route + 1] = direction[config.facing][4].." "..tostring(colCoord - shaftCol)
-	elseif colCoord < shaftCol then
-		route[#route + 1] = direction[config.facing][2].." "..tostring(shaftCol - colCoord)
-	end
-	route[#route + 1] = "up "..tostring(layer + 5)
-	route[#route + 1] = direction[config.facing][3].." 2"
-	route[#route + 1] = direction[config.facing][4]
+	local main, store = {x = config.layout.main[1], z = config.layout.main[2]}, {x = config.layout.store[1], z = config.layout.store[2]}
+	local start, finish = {x = config.layout.shafts[1][1], z = config.layout.shafts[1][2]}, {x = config.layout.shafts[2][1], z = config.layout.shafts[2][2]}
+	local route = pointToPoint(main, store)
+	local n = #route
+	n = n + 1
+	route[n] = "suck "..tostring(count)
+	n = concatenate(route, pointToPoint(store, start)
+	n = n + 1
+	route[n] = "down "..tostring(layer + 5)
+	n = concatenate(route, moveToChest(start, {x = row, z = column}, finish, "drop "..tostring(count)))
+	n = n + 1
+	route[n] = "up "..tostring(layer + 5)
+	concatenate(route, pointToPoint(finish, main))
 	return route
 end
 
 function createRetrievalRoute(layer, row, column, count, data)
-	local route = {}
-	route[#route + 1] = "filter "..tostring(data.name).." "..tostring(data.damage)
-	route[#route + 1] = direction[config.facing][4]
-	route[#route + 1] = direction[config.facing][1].." 2"
-	route[#route + 1] = "down "..tostring(layer + 5)
-	local rowCoord, colCoord
-	local layerMod = layer % #config.layout.layers
-	if layerMod == 0 then layerMod = #config.layout.layers end
-	colCoord = config.layout.layers[layerMod][column]
-	rowCoord = config.layout.rows[row]
-	local shaftRow, shaftCol = config.layout.shafts[1][1], config.layout.shafts[1][2]
-	if colCoord > shaftCol then
-		route[#route + 1] = direction[config.facing][2].." "..tostring(colCoord - shaftCol)
-	elseif colCoord < shaftCol then
-		route[#route + 1] = direction[config.facing][4].." "..tostring(shaftCol - colCoord)
-	end
-	if rowCoord > shaftRow then
-		route[#route + 1] = direction[config.facing][3].." "..tostring(rowCoord - shaftRow)
-	elseif rowCoord < shaftRow then
-		route[#route + 1] = direction[config.facing][1].." "..tostring(shaftRow - rowCoord)
-	end
-	route[#route + 1] = "suck "..tostring(count)
-	if rowCoord > shaftRow then
-		route[#route + 1] = direction[config.facing][1].." "..tostring(rowCoord - shaftRow)
-	elseif rowCoord < shaftRow then
-		route[#route + 1] = direction[config.facing][3].." "..tostring(shaftRow - rowCoord)
-	end
-	shaftCol = config.layout.shafts[2][2]
-	if colCoord > shaftCol then
-		route[#route + 1] = direction[config.facing][4].." "..tostring(colCoord - shaftCol)
-	elseif colCoord < shaftCol then
-		route[#route + 1] = direction[config.facing][2].." "..tostring(shaftCol - colCoord)
-	end
-	route[#route + 1] = "up "..tostring(layer + 5)
-	route[#route + 1] = direction[config.facing][3]
-	route[#route + 1] = "drop "..tostring(count)
-	route[#route + 1] = direction[config.facing][3]
-	route[#route + 1] = direction[config.facing][4]
+	local main, retrieve = {x = config.layout.main[1], z = config.layout.main[2]}, {x = config.layout.retrieve[1], z = config.layout.retrieve[2]}
+	local start, finish = {x = config.layout.shafts[1][1], z = config.layout.shafts[1][2]}, {x = config.layout.shafts[2][1], z = config.layout.shafts[2][2]}
+	local route = pointToPoint(main, start)
+	local n = #route
+	n = n + 1
+	route[n] = "filter "..tostring(data.name).." "..tostring(data.damage)
+	n = n + 1
+	route[n] = "down "..tostring(layer + 5)
+	n = concatenate(route, moveToChest(start, {x = row, z = column}, finish, "suck "..tostring(count)))
+	n = n + 1
+	route[n] = "up"..tostring(layer + 5)
+	n = concatenate(route, pointToPoint(finish, retrieve))
+	n = n + 1
+	route[n] = "drop "..tostring(count)
+	concatenate(route, pointToPoint(retrieve, main))
 	return route
 end
 
-function createIntakeRoute(side)
-	local route = {}
-	route[#route + 1] = direction[side][2]
-	route[#route + 1] = direction[side][1].." 2"
-	route[#route + 1] = "suck"
-	route[#route + 1] = direction[side][3].." 2"
-	route[#route + 1] = direction[side][4]
-	local baseRow, baseCol = config.layout.bases[baseRotations[config.facing][side]][1], config.layout.bases[baseRotations[config.facing][side]][2]
-	local inputRow, inputCol = config.layout.shafts[1][1] + 1, config.layout.shafts[1][2]
-	if baseCol > inputCol then
-		route[#route + 1] = direction[config.facing][4].." "..tostring(baseCol - inputCol)
-	elseif baseCol < inputCol then
-		route[#route + 1] = direction[config.facing][2].." "..tostring(inputCol - baseCol)
-	end
-	if baseRow > inputRow then
-		route[#route + 1] = direction[config.facing][1].." "..tostring(baseRow - inputRow)
-	elseif baseRow < inputRow then
-		route[#route + 1] = direction[config.facing][3].." "..tostring(inputRow - baseRow)
-	end
-	route[#route + 1] = "drop"
-	if baseRow > inputRow then
-		route[#route + 1] = direction[config.facing][3].." "..tostring(baseRow - inputRow)
-	elseif baseRow < inputRow then
-		route[#route + 1] = direction[config.facing][1].." "..tostring(inputRow - baseRow)
-	end
-	if baseCol > inputCol then
-		route[#route + 1] = direction[config.facing][2].." "..tostring(baseCol - inputCol)
-	elseif baseCol < inputCol then
-		route[#route + 1] = direction[config.facing][4].." "..tostring(inputCol - baseCol)
-	end
+function createIntakeRoute(side, layer, row, column, count)
+	local base = {x = config.layout.bases[baseRotations[config.facing][side]][1], z = config.layout.bases[baseRotations[config.facing][side]][2]}
+	local input = vector.new(base.x, 0, base.z) + transformVec[side][2]
+	local start, finish = {x = config.layout.shafts[1][1], z = config.layout.shafts[1][2]}, {x = config.layout.shafts[2][1], z = config.layout.shafts[2][2]}
+	local route = pointToPoint(base, input, true)
+	local n = #route
+	n = n + 1
+	route[n] = "suck "..tostring(count)
+	n = concatenate(route, pointToPoint(input, start))
+	n = n + 1
+	route[n] = "down "..tostring(layer + 5)
+	n = concatenate(route, moveToChest(start, {x = row, z = column}, finish, "drop "..tostring(count)))
+	n = n + 1
+	route[n] = "up "..tostring(layer + 5)
+	concatenate(route, pointToPoint(finish, base))
 	return route
 end
 
 function createOutputRoute(side)
-	local route = {}
-	local baseRow, baseCol = config.layout.bases[baseRotations[config.facing][side]][1], config.layout.bases[baseRotations[config.facing][side]][2]
-	local inputRow, inputCol = config.layout.shafts[2][1] + 1, config.layout.shafts[2][2]
-	if baseCol > inputCol then
-		route[#route + 1] = direction[config.facing][4].." "..tostring(baseCol - inputCol)
-	elseif baseCol < inputCol then
-		route[#route + 1] = direction[config.facing][2].." "..tostring(inputCol - baseCol)
-	end
-	if baseRow > inputRow then
-		route[#route + 1] = direction[config.facing][1].." "..tostring(baseRow - inputRow)
-	elseif baseRow < inputRow then
-		route[#route + 1] = direction[config.facing][3].." "..tostring(inputRow - baseRow)
-	end
-	route[#route + 1] = "suck"
-	if baseRow > inputRow then
-		route[#route + 1] = direction[config.facing][3].." "..tostring(baseRow - inputRow)
-	elseif baseRow < inputRow then
-		route[#route + 1] = direction[config.facing][1].." "..tostring(inputRow - baseRow)
-	end
-	if baseCol > inputCol then
-		route[#route + 1] = direction[config.facing][2].." "..tostring(baseCol - inputCol)
-	elseif baseCol < inputCol then
-		route[#route + 1] = direction[config.facing][4].." "..tostring(inputCol - baseCol)
-	end
-	route[#route + 1] = direction[side][4]
-	route[#route + 1] = direction[side][1].." 2"
-	route[#route + 1] = "drop"
-	route[#route + 1] = direction[side][3].." 2"
-	route[#route + 1] = direction[side][2]
+	local base = {x = config.layout.bases[baseRotations[config.facing][side]][1], z = config.layout.bases[baseRotations[config.facing][side]][2]}
+	local retrieve = {x = config.layout.retrieve[1], z = config.layout.retrieve[2]}
+	local out = vector.new(base.x, 0, base.z) + transformVec[side][2]
+	local route = pointToPoint(base, retrieve)
+	local n = #route
+	n = n + 1
+	route[n] = "suck"
+	n = concatenate(route, pointToPoint(retrieve, out, true))
+	n = n + 1
+	route[n] = "drop"
+	concatenate(route, pointToPoint(out, base))
 	return route
 end
 
@@ -377,7 +390,7 @@ local function getStorageInfo(layer, row, column)
 	end
 end
 
-function store(itemData, queue)
+function store(itemData, side, queue)
 	local name = getCompoundName(itemData)
 	local count = itemData.count
 	local route
@@ -436,7 +449,7 @@ function store(itemData, queue)
 				count = count - moveQuantity
 				if count == 0 then break end
 			end
-			route = createStorageRoute(loc[1], loc[2], loc[3], flightQuantity)
+			route = createIntakeRoute(side, loc[1], loc[2], loc[3], flightQuantity)
 			queue(route)
 			if count == 0 then break end
 		end
@@ -455,7 +468,7 @@ function store(itemData, queue)
 							end
 							table.insert(itemLookup[name], {i, j, k, slot})
 							transaction(i, j, k, slot, name, count)
-							route = createStorageRoute(i, j, k, count)
+							route = createIntakeRoute(side, i, j, k, count)
 							queue(route)
 							count = 0
 							break
