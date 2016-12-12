@@ -283,7 +283,7 @@ local clients = {}
 local routeQueue = {}
 --intake and retrieve are flight queues.
 local queues = {
-	intake = {},
+	intake = flight.queue(nil, config.intakeFlightDelay),
 	output = {},
 	retrieve = flight.queue("back", config.retrievalFlightDelay),
 	store = flight.queue("back", 0),
@@ -292,9 +292,30 @@ local queues = {
 }
 expose = queues
 
+queues.intake.dispatch - function(self)
+	local info
+	for i = 1, #self.queue do
+		info = self.queue[i]
+		local count = peripheral.call(info.side, "getQuadCount")
+		if count < 1 then
+			os.queueEvent("no_quads", info.side)
+		elseif count < self.low then
+			os.queueEvent("low_quads", info.side)
+			table.remove(self.queue, i)
+			break
+		else
+			table.remove(self.queue, i)
+			break
+		end
+	end
+	peripheral.call(info.side, "flyQuad", info.route)
+	--allow an additional timer event to space out the next flight, even if we've just emptied the queue.
+	self.timer = os.startTimer(self.spacing)
+	return "route_depart", info.side, info
+end
+
 for i = 1, 4 do
 	if config.bases[i] then
-		queues.intake[i] = flight.queue(config.bases[i], config.intakeFlightDelay)
 		queues.output[i] = flight.queue(config.bases[i], 0)
 	end
 end
@@ -466,8 +487,8 @@ while true do
 			local side = counterLookup[side]
 			print("Received "..tostring(count).." of "..name.."-"..damage)
 			local route = storage.createIntakeRoute(side)
-			local info = {route = route}
-			queues.intake[side]:add(info)
+			local info = {route = route, side = config.bases[side]}
+			queues.intake:add(info)
 			if #queues.request[side] > 0 then
 				for i = 1, #queues.request[side] do
 					local info = queues.request[side][i]
