@@ -130,7 +130,7 @@ while true do
 		local master = base.getServiceMaster()
 		if master and event[2] == master then
 			if event[3].type == "fly_route" then
-				local side = table.remove(event[3].route, 1)
+				local side = event[3].side
 				peripheral.call(config.bases[side], "flyQuad", event[3].route)
 			end
 		end

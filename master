@@ -56,6 +56,7 @@ local baseRotations = {
 }
 
 if not os.loadAPI("base") then error("Could not load base API!") end
+if not os.loadAPI("flight") then error("Could not load flight API!") end
 if not os.loadAPI("configuration") then error("Could not load configuration API!") end
 if fs.exists("master.conf") then
 	config = configuration.load("master.conf")
@@ -189,8 +190,32 @@ local itemsStored = 0
 local storeControl, sortControl, construction
 local clients = {}
 local routeQueue = {}
---retrieve and intake are flight queues.
-local retrieveQueue, intakeQueue, requestQueue, outputQueue = {}, {}, {{}, {}, {}, {}}, {{}, {}, {}, {}}
+--intake and retrieve are flight queues.
+local queues = {
+	intake = flight.queue(nil, config.intakeFlightDelay),
+	retrieve = flight.queue(nil, config.retrievalFlightDelay),
+	request = {{}, {}, {}, {}},
+	output = {{}, {}, {}, {}},
+}
+expose = queues
+
+queues.intake.dispatch = function(self)
+	if sortControl and storeControl then
+		print("dispatching")
+		local info = table.remove(self.queue, 1)
+		rednet.send(sortControl, {type = "fly_route", route = info.route, side = info.side}, "lyq-inv")
+		self.timer = os.startTimer(self.spacing)
+	end
+end
+
+queues.retrieve.dispatch = function(self)
+	if sortControl and storeControl then
+		local info = table.remove(self.queue, 1)
+		rednet.send(storeControl, {type = "fly_route", route = info.route}, "lyq-inv")
+		self.timer = os.startTimer(self.spacing)
+	end
+end
+
 local flightQueueTimer = os.startTimer(0)
 
 local direction = {
@@ -254,6 +279,8 @@ local clientProtocol = {
 }
 
 base.initialize(config.baseCode, stationInfo, nil, clientProtocol)
+base.addFlightBase(queues.intake)
+base.addFlightBase(queues.retrieve)
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
@@ -264,22 +291,21 @@ while true do
 			if message.type == "store" and event[2] == storeControl then
 				print("Storing "..tostring(message.info.count).." of "..message.info.name.."-"..message.info.damage)
 				storage.store(message.info, function(route) rednet.send(storeControl, {type = "fly_route", route = route}, "lyq-inv") end)
-				os.queueEvent("timer", intakeQueue.timer)
 				itemsStored = itemsStored + 1
 				checkRemainingSpace()
 			elseif message.type == "retrieve" and event[2] == storeControl then
 				print("Retrieved "..tostring(message.info.count).." of "..message.info.name.."-"..message.info.damage)
 				local found = false
-				for j = 1, math.max(#outputQueue[1], #outputQueue[2], #outputQueue[3], #outputQueue[4]) do
+				for j = 1, math.max(#queues.output[1], #queues.output[2], #queues.output[3], #queues.output[4]) do
 					for i = 1, 4 do
-						local info = outputQueue[i][j]
-						if info and info.name == message.info.name and info.damage == message.info.damage and (info.count == message.info.count or (info.count > 64 and message.info.count == 64) or mesage.info.count == info.count % 64) then
+						local info = queues.output[i][j]
+						if info and info.name == message.info.name and info.damage == message.info.damage and (info.count == message.info.count or (info.count > 64 and message.info.count == 64) or message.info.count == info.count % 64) then
 							info.count = info.count - message.info.count
 							local route = storage.createOutputRoute(i)
 							table.insert(route, 1, i)
 							rednet.send(sortControl, {type = "fly_route", route = route}, "lyq-inv")
 							if info.count == 0 then
-								table.remove(outputQueue[i], j)
+								table.remove(queues.output[i], j)
 								base.sendToBaseMaster({type = "object_surplus", objectType = "item", objectInfo = {name = info.name, damage = info.damage, count = info.total}, location = config.locations[i][2].location})
 							end
 							found = true
@@ -291,15 +317,15 @@ while true do
 			elseif message.type == "item_arrived" and event[2] == sortControl then
 				print("Received "..tostring(message.info.count).." of "..message.info.name.."-"..message.info.damage)
 				local route = storage.createIntakeRoute(message.side)
-				table.insert(route, 1, message.side)
-				queueFlight(route, intakeQueue)
-				if #requestQueue[message.side] > 0 then
-					for i = 1, #requestQueue[message.side] do
-						local info = requestQueue[message.side][i]
-						if info and info.name == message.info.name and info.damage == message.info.damage and (info.count == message.info.count or (info.count > 64 and message.info.count == 64) or mesage.info.count == info.count % 64)  then
+				local info = {route = route, side = message.side}
+				queues.intake:add(info)
+				if #queues.request[message.side] > 0 then
+					for i = 1, #queues.request[message.side] do
+						local info = queues.request[message.side][i]
+						if info and info.name == message.info.name and info.damage == message.info.damage and (info.count == message.info.count or (info.count > 64 and message.info.count == 64) or message.info.count == info.count % 64)  then
 							info.count = info.count - message.info.count
 							if info.count == 0 then
-								table.remove(requestQueue[message.side], i)
+								table.remove(queues.request[message.side], i)
 							end
 							break
 						end
@@ -321,8 +347,8 @@ while true do
 				local queueMin, queueChoice = math.huge, -1
 				for i = 1, 4 do
 					local count = 0
-					for j = 1, #outputQueue[i] do
-						count = count + outputQueue[i][j].count
+					for j = 1, #queues.output[i] do
+						count = count + queues.output[i][j].count
 					end
 					if count < queueMin then
 						queueMin = count
@@ -330,15 +356,15 @@ while true do
 					end
 				end
 				itemData.total = itemData.count
-				table.insert(outputQueue[queueChoice], itemData)
+				table.insert(queues.output[queueChoice], itemData)
 				print("Retrieving "..tostring(itemData.count).." of "..itemData.name.."-"..itemData.damage)
-				local success, count = storage.retrieve(itemData, function(route) queueFlight(route, retrieveQueue) end)
+				local success, count = storage.retrieve(itemData, function(route) queues.retrieve:add({route = route}) end)
 				if not success then
 					print("Couldn't retrieve "..count.." items.")
-					local queueInfo = outputQueue[queueChoice][#outputQueue[queueChoice]]
+					local queueInfo = queues.output[queueChoice][#queues.output[queueChoice]]
 					queueInfo.count = queueInfo.count - count
 					if queueInfo.count == 0 then
-						outputQueue[queueChoice][#outputQueue[queueChoice]] = nil
+						queues.output[queueChoice][#queues.output[queueChoice]] = nil
 					end
 				end
 			elseif message.type == "create_request" then
@@ -346,15 +372,15 @@ while true do
 				local queueMin, queueChoice = math.huge, -1
 				for i = 1, 4 do
 					local count = 0
-					for j = 1, #requestQueue[i] do
-						count = count + requestQueue[i][j].count
+					for j = 1, #queues.request[i] do
+						count = count + queues.request[i][j].count
 					end
 					if count < queueMin then
 						queueMin = count
 						queueChoice = i
 					end
 				end
-				table.insert(requestQueue[queueChoice], itemData)
+				table.insert(queues.request[queueChoice], itemData)
 				base.sendToBaseMaster({type = "object_required", objectType = "item", objectInfo = itemData, location = config.locations[queueChoice][1].location, crafting = "none", baseCode = config.baseCode}, "lyq-base")
 			elseif message.type == "free_space" then
 				rednet.send(event[2], {type = "free_space_count", info = storage.getSpaceRemaining(), baseCode = config.baseCode}, "lyq-base-inv")
@@ -363,28 +389,6 @@ while true do
 			elseif message.type == "unused_layers" then
 			elseif message.type == "item_density" then
 				rednet.send(event[2], {type = "item_density_percent", info = storage.calculateItemDensity(), baseCode = config.baseCode}, "lyq-base-inv")
-			end
-		end
-	elseif event[1] == "timer" then
-		if event[2] == retrieveQueue.timer then
-			if storeControl then
-				rednet.send(storeControl, {type = "fly_route", route = table.remove(retrieveQueue, 1)}, "lyq-inv")
-			end
-			if #retrieveQueue > 0 then
-				retrieveQueue.timer = os.startTimer(config.retrievalFlightDelay)
-			else
-				retrieveQueue.timer = nil
-			end
-		elseif event[2] == intakeQueue.timer then
-			if storeControl then
-				rednet.send(sortControl, {type = "fly_route", route = table.remove(intakeQueue, 1)}, "lyq-inv")
-			end
-			if #intakeQueue > 0 then
-				--block input until intake counter is emptied.
-				intakeQueue.block = true
-				intakeQueue.timer = {}
-			else
-				intakeQueue.timer = os.startTimer(config.intakeFlightDelay)
 			end
 		end
 	elseif event[1] == "terminate" then
