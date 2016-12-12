@@ -72,17 +72,8 @@ if fs.exists("inventory.conf") then
 else
 	--initial setup
 	print("Initial Setup for Master Storage Controller")
-	while not os.getComputerLabel() do
-		print("Please provide a label for this computer.")
-		write("> ")
-		local label = read()
-		if #label >= 1 then
-			os.setComputerLabel(label)
-			break
-		else
-			print("A label is required!")
-		end
-	end
+	base.setup(config, true, "Determine the direction by standing at this computer and looking toward the center torch.")
+	
 	local counters, bases
 
 	local function grabRemotePeripherals(periph)
@@ -166,59 +157,6 @@ else
 		until answer
 	end
 	do
-		local loc = vector.new(gps.locate())
-		if loc.y == 0 then
-			local x, y, z
-			repeat
-				print("What is this station's X coordinate?")
-				print("Use the location of the master controller (this computer).")
-				write("> ")
-				x = tonumber(read())
-				if not (x and x == math.floor(x)) then
-					print("A valid integer is required!")
-					x = nil
-				end
-			until x
-			repeat
-				print("What is this station's Y coordinate?")
-				print("Use the location of the master controller (this computer).")
-				write("> ")
-				y = tonumber(read())
-				if not (y and y == math.floor(y) and y > 0) then
-					print("A valid positive integer is required!")
-					y = nil
-				end
-			until y
-			repeat
-				print("What is this station's Z coordinate?")
-				print("Use the location of the master controller (this computer).")
-				write("> ")
-				z = tonumber(read())
-				if not (z and z == math.floor(z)) then
-					print("A valid integer is required!")
-					z = nil
-				end
-			until z
-			loc = vector.new(x, y, z)
-		end
-		config.location = loc
-	end
-	while true do
-		print("Which direction does this storage station face?")
-		print("Determine the direction by standing at the center torch and looking toward the master controller computer (this computer).")
-		print("Enter 1 - 4, corresponding to the correct direction:")
-		print("1. north      2. east")
-		print("3. south      4. west")
-		write("> ") 
-		local direction = tonumber(read())
-		if direction and direction == math.floor(direction) and direction >= 1 and direction <= 4 then
-			config.facing = direction
-			break
-		else
-			print("A valid direction is required!")
-		end
-	end
-	do
 		local masterVec = vector.new(config.layout.master[1], 0, config.layout.master[2])
 		local transformVec = {
 			{vector.new(-2, 0, 1), vector.new(-2, 0, -1)},
@@ -249,18 +187,6 @@ else
 					{location = config.location + outVec, capabilities = "output-items"},
 				}
 			end
-		end
-	end
-	while true do
-		print("What is the name code for this base?")
-		print("Base name codes are used to group and differentiate sites.")
-		write("> ")
-		local baseCode = read()
-		if baseCode and #baseCode > 0 then
-			config.baseCode = baseCode
-			break
-		else
-			print("A base name code is required!")
 		end
 	end
 	configuration.save("inventory.conf", config)

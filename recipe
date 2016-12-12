@@ -14,29 +14,7 @@ if fs.exists("recipe.conf") then
 else
 	--initial setup
 	print("Initial Setup for Recipe Entry Station")
-	while not os.getComputerLabel() do
-		print("Please provide a label for this computer.")
-		write("> ")
-		local label = read()
-		if #label >= 1 then
-			os.setComputerLabel(label)
-			break
-		else
-			print("A label is required!")
-		end
-	end
-	while true do
-		print("What is the name code for this base?")
-		print("Base name codes are used to group and differentiate sites.")
-		write("> ")
-		local baseCode = read()
-		if baseCode and #baseCode > 0 then
-			config.baseCode = baseCode
-			break
-		else
-			print("A base name code is required!")
-		end
-	end
+	base.setup(config)
 	configuration.save("recipe.conf", config)
 end
 
@@ -66,7 +44,7 @@ local function redraw()
 	term.setTextColor(colors.white)
 	printCenter("Recipe Entry Station")
 	
-    
+	
 local stationInfo = {
 	type = "recipe-entry",
 	locations = {}
@@ -77,7 +55,7 @@ base.initialize(config.baseCode, stationInfo, serviceProtocol)
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
 	if event[1] == "turtle_inventory" then
-        --inventory changed.
+		--inventory changed.
 	elseif event[1] == "terminate" then
 		print("Stopping")
 		return

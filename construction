@@ -14,18 +14,7 @@ if fs.exists("construction.conf") then
 	config = configuration.load("construction.conf")
 else
 	print("Initial Setup for Construction Turtle")
-	while true do
-		print("What is the name code for this base?")
-		print("Base name codes are used to group and differentiate sites.")
-		write("> ")
-		local baseCode = read()
-		if baseCode and #baseCode > 0 then
-			config.baseCode = baseCode
-			break
-		else
-			print("A base name code is required!")
-		end
-	end
+	base.setup(config)
 	configuration.save("construction.conf", config)
 end
 

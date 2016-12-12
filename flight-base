@@ -21,55 +21,7 @@ if fs.exists("flight.conf") then
 else
 	--initial setup
 	print("Initial Setup for Flight Base")
-	while not os.getComputerLabel() do
-		print("Please provide a label for this computer.")
-		write("> ")
-		local label = read()
-		if #label >= 1 then
-			os.setComputerLabel(label)
-			break
-		else
-			print("A label is required!")
-		end
-	end
-	do
-		local loc = vector.new(gps.locate())
-		if loc.y == 0 then
-			local x, y, z
-			repeat
-				print("What is this station's X coordinate?")
-				print("Use the location of this computer.")
-				write("> ")
-				x = tonumber(read())
-				if not (x and x == math.floor(x)) then
-					print("A valid integer is required!")
-					x = nil
-				end
-			until x
-			repeat
-				print("What is this station's Y coordinate?")
-				print("Use the location of this computer.")
-				write("> ")
-				y = tonumber(read())
-				if not (y and y == math.floor(y) and y > 0) then
-					print("A valid positive integer is required!")
-					y = nil
-				end
-			until y
-			repeat
-				print("What is this station's Z coordinate?")
-				print("Use the location of this computer.")
-				write("> ")
-				z = tonumber(read())
-				if not (z and z == math.floor(z)) then
-					print("A valid integer is required!")
-					z = nil
-				end
-			until z
-			loc = vector.new(x, y, z)
-		end
-		config.location = loc
-	end
+	base.setup(config, true)
 	local objectType
 	do
 		repeat
@@ -82,18 +34,6 @@ else
 		config.locations = {
 			{location = config.location + vector.new(0,1,0), capabilities = "fly-quad-"..objectType.."s", side = "top"},
 		}
-	end
-	while true do
-		print("What is the name code for this base?")
-		print("Base name codes are used to group and differentiate sites.")
-		write("> ")
-		local baseCode = read()
-		if baseCode and #baseCode > 0 then
-			config.baseCode = baseCode
-			break
-		else
-			print("A base name code is required!")
-		end
 	end
 	configuration.save("flight.conf", config)
 end
