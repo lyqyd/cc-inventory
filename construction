@@ -5,6 +5,7 @@ local loc, buildLoc
 
 local config = {
 	baseCode = "",
+	initialized = false,
 }
 
 if not os.loadAPI("base") then error("Could not load base API!") end
@@ -42,26 +43,27 @@ elseif fs.exists("/projects") and fs.isDir("/projects") then
 	projectDir = "/projects"
 end
 
-
-
-if projectDir then
-	local file = fs.combine(projectDir, "storage-layer")
-	local usefulEnv = {shell = shell}
-	setmetatable(usefulEnv, {__index = _G})
-	local env = {}
-	setmetatable(env, {__index = usefulEnv})
-	local fn, err = loadfile(file)
-	if fn then
-		setfenv(fn, env)
-		fn()
-		--copy into project table
-		for k, v in pairs(env) do
-			project[k] = v
+local function loadProject(name)
+	if projectDir then
+		local file = fs.combine(projectDir, name)
+		local usefulEnv = {shell = shell}
+		setmetatable(usefulEnv, {__index = _G})
+		local env = {}
+		setmetatable(env, {__index = usefulEnv})
+		local fn, err = loadfile(file)
+		if fn then
+			setfenv(fn, env)
+			fn()
+			--copy into project table
+			for k, v in pairs(env) do
+				project[k] = v
+			end
 		end
+		return true
+	else
+		print("Could not find project folder!")
+		return false
 	end
-else
-	print("Could not find project folder!")
-	return
 end
 
 local function isSlotReady(slot)
@@ -144,6 +146,47 @@ local serviceProtocol = {
 
 base.initialize(config.baseCode, nil, serviceProtocol, nil, true)
 
+if not config.initialized then
+	io.write("Initialization Mode\n")
+	io.write("Performing initial setup for inventory system.\n")
+	if loadProject("storage_init") then
+		while not isReady() do
+			local fuelCost = project.requirements.fuel
+			if type(project.requirements.fuel) == "function" then
+				local env = constructEnv()
+				setfenv(project.requirements.fuel, env)
+				fuelCost = project.requirements.fuel()
+			end
+			io.write("Please place items in slots:\n")
+			io.write("1. 64 Chests\n")
+			io.write("2. 8 Chests\n")
+			io.write("3. 1 Disk Drive\n")
+			io.write("4. 1 Floppy Disk\n")
+			io.write("5. 1 Modem\n")
+			io.write("6. Fuel Items, if Necessary\n")
+			io.write("7-16. Empty\n")
+			io.write("Fuel: "..tostring(turtle.getFuelLevel()).." Need: "..fuelCost
+			io.write('Enter "refuel" to refuel, anything else to check ready.\n')
+			io.write("> ")
+			input = io.read()
+			if input == "refuel" then
+				turtle.select(6)
+				turtle.refuel(64)
+			end
+		end
+	end
+	do
+		local details = turtle.getItemDetail(1)
+		local storageBlock = details and (details.damage > 0 and details.name.."-"..details.damage or details.name)
+		setfenv(project.instructions, constructEnv())
+		local items = project.instructions()
+		base.sendToServiceMaster({type = "initialization", info = items}, "lyq-inv")
+	end
+	config.initialized = true
+	configuration.save("construction.conf", config)
+end
+
+
 local function communicate()
 	while true do
 		local event = {base.handleEvents(os.pullEventRaw())}
@@ -160,19 +203,21 @@ local function construct()
 		if event[1] == "rednet_message" and event[4] == "lyq-inv" then
 			if event[2] == master then
 				if event[3].type == "build_layer" then
-					local origin, layer = event[3].origin, event[3] .layer
-					project.requirements.locations.start = location.new(origin.x, origin.y, origin.z, origin.h)
-					project.requirements.locations.setup = location.new(layer.x, layer.y, layer.z, layer.h)
-					--do the thing!
-					if isReady() then
-						local details = turtle.getItemDetail(1)
-						local storageBlock = details and (details.damage > 0 and details.name.."-"..details.damage or details.name)
-						setfenv(project.instructions, constructEnv())
-						project.instructions()
-						--then tell master we did it:
-						rednet.send(master, {type = "layer_complete", block = storageBlock}, "lyq-inv")
-					else
-						--figure out what isn't ready and fix it.
+					if loadProject("storage_layer") then
+						local origin, layer = event[3].origin, event[3] .layer
+						project.requirements.locations.start = location.new(origin.x, origin.y, origin.z, origin.h)
+						project.requirements.locations.setup = location.new(layer.x, layer.y, layer.z, layer.h)
+						--do the thing!
+						if isReady() then
+							local details = turtle.getItemDetail(1)
+							local storageBlock = details and (details.damage > 0 and details.name.."-"..details.damage or details.name)
+							setfenv(project.instructions, constructEnv())
+							project.instructions()
+							--then tell master we did it:
+							base.sendToServiceMaster({type = "layer_complete", block = storageBlock}, "lyq-inv")
+						else
+							--figure out what isn't ready and fix it.
+						end
 					end
 				end
 			end
