@@ -7,7 +7,7 @@ local config = {
 	--in a north-facing setup (master north of service holes), rows are east-west and columns are north-south.
 	--facing is determined by which direction the master computer is from the service holes.
 	facing = 1,
-	layers = 1,
+	layers = 0,
 	rows = 6,
 	columns = 6,
 	layout = {
