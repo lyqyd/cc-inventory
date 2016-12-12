@@ -23,29 +23,7 @@ if fs.exists("base.conf") then
 else
 	--initial setup
 	print("Initial Setup for Master Base Controller")
-	while not os.getComputerLabel() do
-		print("Please provide a label for this computer.")
-		write("> ")
-		local label = read()
-		if #label >= 1 then
-			os.setComputerLabel(label)
-			break
-		else
-			print("A label is required!")
-		end
-	end
-	while true do
-		print("What is the name code for this base?")
-		print("Base name codes are used to group and differentiate sites.")
-		write("> ")
-		local baseCode = read()
-		if baseCode and #baseCode > 0 then
-			config.baseCode = baseCode
-			break
-		else
-			print("A base name code is required!")
-		end
-	end
+	base.setup(config)
 	configuration.save("base.conf", config)
 end
 
