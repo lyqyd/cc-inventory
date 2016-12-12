@@ -86,14 +86,16 @@ for i, info in ipairs(config.storageBlocks) do
 	storageInfo[info.name] = info
 end
 
-local function prepareDatabase() 
+local function prepareDatabase()
 	--initial fill of storageDatabase dimensions
-	for i = 1, config.layers do
-		storageDatabase[i] = {}
-		for j = 1, config.rows do
-			storageDatabase[i][j] = {}
-			for k = 1, config.columns do
-				storageDatabase[i][j][k] = {storage = "none", slotSize = 0, slotCount = 1, {name = "empty", count = 0}}
+	if config.layers > 0 then
+		for i = 1, config.layers do
+			storageDatabase[i] = {}
+			for j = 1, config.rows do
+				storageDatabase[i][j] = {}
+				for k = 1, config.columns do
+					storageDatabase[i][j][k] = {storage = "none", slotSize = 0, slotCount = 1, {name = "empty", count = 0}}
+				end
 			end
 		end
 	end
@@ -127,20 +129,22 @@ end
 local function writeStorageDatabase()
 	local handle = io.open(config.databasePath, "w")
 	if handle then
-		for i = 1, #storageDatabase do
-			for j = 1, #storageDatabase[i] do
-				for k = 1, #storageDatabase[i][j] do
-					local entry = storageDatabase[i][j][k]
-					local str = tostring(i)..","..tostring(j)..","..tostring(k)..";"..tostring(entry.storage).." "
-					for i, info in ipairs(entry) do
-						str = str..tostring(info.name)..","..tostring(info.count)..";"
+		if #storageDatabase > 0 then
+			for i = 1, #storageDatabase do
+				for j = 1, #storageDatabase[i] do
+					for k = 1, #storageDatabase[i][j] do
+						local entry = storageDatabase[i][j][k]
+						local str = tostring(i)..","..tostring(j)..","..tostring(k)..";"..tostring(entry.storage).." "
+						for i, info in ipairs(entry) do
+							str = str..tostring(info.name)..","..tostring(info.count)..";"
+						end
+						if #entry == 0 then str = str.."empty,0;" end
+						--trim excess empty slot designations from ends of lines.
+						while string.match(str, ";empty,0;$") do
+							str = string.match(str, "(.*;)empty,0;")
+						end
+						handle:write(str.."\n")
 					end
-					if #entry == 0 then str = str.."empty,0;" end
-					--trim excess empty slot designations from ends of lines.
-					while string.match(str, ";empty,0;$") do
-						str = string.match(str, "(.*;)empty,0;")
-					end
-					handle:write(str.."\n")
 				end
 			end
 		end
@@ -150,14 +154,16 @@ end
 
 local function prepareLookupTable()
 	--assumes completely loaded and up to date storageDatabase.
-	for i = 1, #storageDatabase do
-		for j = 1, #storageDatabase[i] do
-			for k = 1, #storageDatabase[i][j] do
-				for slot = 1, #storageDatabase[i][j][k] do
-					if not itemLookup[storageDatabase[i][j][k][slot].name] then
-						itemLookup[storageDatabase[i][j][k][slot].name] = {}
+	if #storageDatabase > 0 then
+		for i = 1, #storageDatabase do
+			for j = 1, #storageDatabase[i] do
+				for k = 1, #storageDatabase[i][j] do
+					for slot = 1, #storageDatabase[i][j][k] do
+						if not itemLookup[storageDatabase[i][j][k][slot].name] then
+							itemLookup[storageDatabase[i][j][k][slot].name] = {}
+						end
+						table.insert(itemLookup[storageDatabase[i][j][k][slot].name], {i, j, k, slot})
 					end
-					table.insert(itemLookup[storageDatabase[i][j][k][slot].name], {i, j, k, slot})
 				end
 			end
 		end
@@ -174,6 +180,7 @@ function initialize(configuration)
 	readStorageDatabase()
 	writeStorageDatabase()
 	prepareLookupTable()
+	if #storageDatabase > 0 then return true else return false end
 end
 
 function transaction(layer, row, column, slot, name, delta)
