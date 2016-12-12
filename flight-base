@@ -8,6 +8,7 @@ local config = {
 	baseCode = "",
 	location = nil,
 	locations = {},
+	dispatchDelay = 0.8,
 }
 
 local slotMap = {5, 6, 7, 9, 10, 11, 13, 14, 15}
@@ -79,7 +80,7 @@ else
 	end
 	do
 		config.locations = {
-			{location = config.location + vector.new(0,1,0), capabilities = "fly-quad-"..objectType.."s"},
+			{location = config.location + vector.new(0,1,0), capabilities = "fly-quad-"..objectType.."s", side = "top"},
 		}
 	end
 	while true do
@@ -107,7 +108,7 @@ local stationInfo = {
 base.initialize(config.baseCode, stationInfo)
 
 for i = 1, #config.locations do
-	local queue = flight.queue("top")
+	local queue = flight.queue(config.locations[i].side, dispatchDelay)
 	base.addFlightBase(queue, config.locations[i].location)
 end
 
