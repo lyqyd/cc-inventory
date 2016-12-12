@@ -139,25 +139,25 @@ function route(a, b, c, d, count, filter)
 	return route
 end
 
+local function tickFlights(self)
+	if #self.queue > 0 then
+		if not self.blocked then
+			return self:dispatch()
+		else
+			self.timer = -1
+		end
+	else
+		self.timer = -1
+	end
+end
+
 local Queue = {
 	handleEvents = function(self, ...)
 		local event = {...}
 		if event[1] == "timer" and event[2] == self.timer then
-			if #self.queue > 0 then
-				local count = peripheral.call(self.side, "getQuadCount")
-				if count < 1 then
-					self.timer = os.startTimer(self.spacing)
-					return "no_quads"
-				elseif count < self.low then
-					os.queueEvent("low_quads")
-				end
-				local info = table.remove(self.queue, 1)
-				peripheral.call(self.side, "flyQuad", info.route)
-				--allow an additional timer event to space out the next flight, even if we've just emptied the queue.
-				self.timer = os.startTimer(self.spacing)
-				return "route_depart", self.side, info
-			else
-				self.timer = -1
+			result = {tickFlights(self)}
+			if #result > 0 then
+				return unpack(result)
 			end
 		end
 		return unpack(event)
@@ -169,6 +169,20 @@ local Queue = {
 			self.timer = os.startTimer(0)
 		end
 	end,
+	block = function(self)
+		--blocks dispatching of new flights until unblocked
+		self.blocked = true
+	end,
+	unblock = function(self)
+		--unblocks dispatching of new flights, dispatches a flight if timer expired
+		self.blocked = false
+		if self.timer == -1 then
+			local result = {tickFlights(self)}
+			if #result > 0 then
+				os.queueEvent(unpack(result))
+			end
+		end
+	end,
 }
 
 local queueMeta = {__index = Queue}
@@ -178,7 +192,22 @@ function queue(side, time, threshold)
 	obj.timer = -1
 	obj.queue = {}
 	obj.side = side
+	obj.blocked = false
 	obj.spacing = time or 0.8
 	obj.low = threshold or 4
+	obj.dispatch = function(self)
+		local count = peripheral.call(self.side, "getQuadCount")
+		if count < 1 then
+			self.timer = os.startTimer(self.spacing)
+			return "no_quads"
+		elseif count < self.low then
+			os.queueEvent("low_quads")
+		end
+		local info = table.remove(self.queue, 1)
+		peripheral.call(self.side, "flyQuad", info.route)
+		--allow an additional timer event to space out the next flight, even if we've just emptied the queue.
+		self.timer = os.startTimer(self.spacing)
+		return "route_depart", self.side, info
+	end
 	return obj
 end
