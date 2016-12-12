@@ -33,6 +33,9 @@ local config = {
 		},
 		--master coords used to transform gps coordinates and base coordinates for actual pick-up and drop-off coords.
 		master = {7, 6},
+		retrieve = {7, 7},
+		store = {7, 5},
+		main = {8, 6},
 	},
 	retrievalFlightDelay = 1,
 	intakeFlightDelay = 0.6,
@@ -278,12 +281,12 @@ end
 peripheral.find("modem", function(name) rednet.open(name) end)
 
 local itemsStored = 0
-local storeControl, sortControl, construction
+local construction
 local clients = {}
 local routeQueue = {}
 --intake and retrieve are flight queues.
 local queues = {
-	intake = flight.queue(nil, config.intakeFlightDelay),
+	intake = {},
 	output = {},
 	retrieve = flight.queue("back", config.retrievalFlightDelay),
 	store = flight.queue("back", 0),
@@ -316,6 +319,7 @@ end
 
 for i = 1, 4 do
 	if config.bases[i] then
+		queues.intake[i] = flight.queue(config.bases[i], config.intakeFlightDelay)
 		queues.output[i] = flight.queue(config.bases[i], 0)
 	end
 end
@@ -341,6 +345,7 @@ end
 local function checkRemainingSpace()
 	if itemsStored <= 30 then return end
 	if storage.getSlotsRemaining() < 120 then
+		local construction = base.getClientByType("construction_online")
 		if construction then
 			rednet.send(construction, {event = "build_layer", origin = {x = 0, y = config.layers + 7, z = 0, h = 1}, layer = {x = 0, y = 1, z = 0, h = 1}}, "lyq-inv")
 		end
@@ -363,18 +368,12 @@ end
 local clientProtocol = {
 	protocol = "lyq-inv",
 	name = {
-		storage_online = "Storage controller",
-		sorting_online = "Sorting controller",
 		construction_online = "Construction turtle",
 	},
 	online = {
-		storage_online = true,
-		sorting_online = true,
 		construction_online = true,
 	},
 	offline = {
-		storage_offline = true,
-		sorting_offline = true,
 		construction_offline = true,
 	},
 	list = clients,
@@ -483,12 +482,12 @@ while true do
 				if found then break end
 			end
 		else
-			--one of the four sorting sides
+			--one of the intake sides
 			local side = counterLookup[side]
-			print("Received "..tostring(count).." of "..name.."-"..damage)
-			local route = storage.createIntakeRoute(side)
-			local info = {route = route, side = config.bases[side]}
-			queues.intake:add(info)
+			print("Storing "..tostring(count).." of "..name.."-"..damage)
+			storage.store({name = name, damage = damage, count = count}, side, function(route) queues.intake[side]:add({route = route}) end)
+			itemsStored = itemsStored + 1
+			checkRemainingSpace()
 			if #queues.request[side] > 0 then
 				for i = 1, #queues.request[side] do
 					local info = queues.request[side][i]
