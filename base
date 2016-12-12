@@ -131,7 +131,8 @@ local function searchTimerExpired(info)
 	if #info.hosts < 1 then
 		io.write("Please set up a "..info.name.." master!\n")
 		searchForHosts(info)
-	else
+	elseif info.master == -1 then
+		info.search = os.startTimer(dnsTime)
 		for i = 1, #info.hosts do
 			rednet.send(info.hosts[i], {type = "base_query", baseCode = comm.base.code}, info.protocol)
 		end
@@ -266,10 +267,14 @@ function handleEvents(...)
 			if comm.base.master > -1 then
 				io.write("Base master timed out.\n")
 				searchForHosts(comm.base)
+			else
+				searchForHosts(comm.base)
 			end
 		elseif event[2] == comm.sub.keepAlive then
 			if comm.sub.master > -1 then
 				io.write("Backend timed out.\n")
+				searchForHosts(comm.sub)
+			else
 				searchForHosts(comm.sub)
 			end
 		elseif event[2] == comm.clients.keepAlive then
