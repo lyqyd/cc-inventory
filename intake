@@ -21,13 +21,13 @@ else
 	base.setup(config, true, "Determine the direction by standing behind the turtle and looking in the direction it faces.")
 	do
 		local facingVec = {
-			{vector.new(0, 0, -1), vector.new(0, 0, 1)},
-			{vector.new(1, 0, 0), vector.new(-1, 0, 0)},
-			{vector.new(0, 0, 1), vector.new(0, 0, -1)},
-			{vector.new(-1, 0, 0), vector.new(1, 0, 0)}
+			vector.new(0, 0, -1),
+			vector.new(1, 0, 0),
+			vector.new(0, 0, 1),
+			vector.new(-1, 0, 0)
 		}
 		config.locations = {
-			{location = config.location + facingVec[config.facing][1], capabilities = "output-items"},
+			{location = config.location + facingVec[config.facing], capabilities = "output-items"},
 		}
 	end
 	configuration.save("intake.conf", config)
