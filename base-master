@@ -105,36 +105,6 @@ for class, words in pairs(keywords) do
 	end
 end
 
-local function normalizeName(info)
-	if info.name and info.damage then
-		return info.name, info.damage
-	elseif info.combinedName then
-		local name, damage = string.match(info.combinedName, "(.-)%-(%d+)$")
-		if name and damage then
-			return name, damage
-		else
-			return info.combinedName, 0
-		end
-	else
-		return false
-	end
-end
-
-local function resolveObjectName(class, info)
-	if class == "item" then
-		if info.combinedName then
-			return info.combinedName
-		elseif info.name and info.damage then
-			if info.damage > 0 then
-				return info.name.."-"..info.damage
-			else
-				return info.name
-			end
-		end
-	end
-	return false
-end
-
 local function getBestBase(obj, id)
 	local bases = stationInfo[id].capabilities[keywords.capabilities.flight[obj]]
 	if #bases > 1 then
@@ -177,23 +147,23 @@ local function chooseFlightBase(obj, from, to)
 	end
 end
 
-local function queueFlight(objectType, objectInfo, origin, destination)
-	local flightStation, base = chooseFlightBase(objectType, origin, destination)
+local function queueFlight(object, origin, destination)
+	local object = base.fillObjectData(object)
+	local flightStation, base = chooseFlightBase(object.class, origin, destination)
 	local total = 0
-	while objectInfo.count > 0 do
+	while object.count > 0 do
 		if not base then break end
-		local count = math.min(objectInfo.count, config.maxFlightQuantity[objectType])
-		local newInfo = {count = count}
-		newInfo.name, newInfo.damage = normalizeName(objectInfo)
-		local route = flight.route(base.location, origin.location, destination.location, nil, newInfo.count, newInfo.name.." "..newInfo.damage)
+		local count = math.min(object.count, config.maxFlightQuantity[object.class])
+		local route = flight.route(base.location, origin.location, destination.location, nil, count, object.name.." "..object.damage)
 		flightID = flightID + 1
-		table.insert(base.queue, {id = flightID, route = route, origin = origin, destination = destination, objectInfo = newInfo})
+		local newInfo = {class = object.class, name = object.name, damage = object.damage, count = count}
+		table.insert(base.queue, {id = flightID, route = route, origin = origin, destination = destination, object = newInfo})
 		flightLookup[flightID] = base
-		objectInfo.count = objectInfo.count - count
+		object.count = object.count - count
 		total = total + count
 		if base.count < #base.queue + 1 then
 			--if the base we're using runs out of quadracoptors, use a different base.
-			flightStation, base = chooseFlightBase(objectType, origin, destination)
+			flightStation, base = chooseFlightBase(object.class, origin, destination)
 		end
 	end
 	return total
@@ -231,7 +201,7 @@ local function fulfillRequestsFromSurplus()
 							if #requesters.limited > 0 then
 								local requestInfo = requesters.limited[1]
 								local count = math.min(info.ref.count, requestInfo.ref.count)
-								local total = queueFlight(type, {combinedName = name, count = count}, {id = info.id, location = info.location}, {id = requestInfo.id, location = requestInfo.location})
+								local total = queueFlight({class = type, hash = name, count = count}, {id = info.id, location = info.location}, {id = requestInfo.id, location = requestInfo.location})
 								info.ref.count = info.ref.count - total
 								info.ref.flag = nil
 								requestInfo.ref.count = requestInfo.ref.count - total
@@ -242,7 +212,7 @@ local function fulfillRequestsFromSurplus()
 								table.sort(requesters.infinite, function(a,b) return a.total < b.total end)
 								local requestInfo = requesters.infinite[1]
 								local count = math.min(info.ref.count, 64)
-								local total = queueFlight(type, {combinedName = name, count = count}, {id = info.id, location = info.location}, {id = requestInfo.id, location = requestInfo.location})
+								local total = queueFlight({class = type, hash = name, count = count}, {id = info.id, location = info.location}, {id = requestInfo.id, location = requestInfo.location})
 								info.ref.count = info.ref.count - total
 								requestInfo.ref.total = requestInfo.ref.total + total
 							else
@@ -266,11 +236,11 @@ local function storeSurplus()
 					if info.count > 0 and not info.flag then
 						--select a storage facility and instruct it to request the objects.
 						local highCount, stationID = 0, -1
-						local name, damage = normalizeName({combinedName = _name})
+						local object = base.fillObjectData({class = objType, hash = _name})
 						for inv, stoInfo in pairs(storage[objType]) do
 							--pick the facility with the most of the item already in storage.
-							if stoInfo[name] and stoInfo[name][damage] and stoInfo[name][damage] > highCount then
-								highCount = stoInfo[name][damage]
+							if stoInfo[name] and stoInfo[object.name][object.damage] and stoInfo[object.name][object.damage] > highCount then
+								highCount = stoInfo[object.name][object.damage]
 								stationID = inv
 							end
 						end
@@ -294,8 +264,9 @@ local function storeSurplus()
 						if stationID == -1 then
 							--failure to find a storage facility
 						else
-							print("Creating request for "..tostring(info.count).." of "..name.."-"..tostring(damage))
-							rednet.send(stationID, {type = "create_request", objectType = objType, objectInfo = {name = name, damage = damage, count = info.count}, baseCode = config.baseCode}, "lyq-base-inv")
+							object.count = info.count
+							print("Creating request for "..tostring(object.count).." of "..object.name.."-"..tostring(object.damage))
+							rednet.send(stationID, {type = "create_request", object = object, baseCode = config.baseCode}, "lyq-base-inv")
 							--flag this surplus as destined for storage, so we don't attempt to store it again.
 							info.flag = true
 						end
@@ -318,11 +289,11 @@ local function fillRequests()
 						if info.crafting == "none" or info.crafting == "allow" then
 							while info.count == true or total < info.count do
 								local lowCount, stationID = math.huge, -1
-								local name, damage = normalizeName({combinedName = _name})
+								local object = base.fillObjectData({class = objType, hash = _name})
 								for inv, stoInfo in pairs(storage[objType]) do
 									--pick the facility with the lowest quantity of the item in storage.
-									if stoInfo[name] then
-										local objectCount = stoInfo[name][damage]
+									if stoInfo[object.name] then
+										local objectCount = stoInfo[object.name][object.damage]
 										if objectCount < lowCount and objectCount > 0 then
 											lowCount = objectCount
 											stationID = inv
@@ -340,7 +311,8 @@ local function fillRequests()
 									break
 								else
 									print("Creating surplus of "..tostring(lowCount).." of "..name.."-"..tostring(damage))
-									rednet.send(stationID, {type = "create_surplus", objectType = objType, objectInfo = {name = name, damage = damage, count = lowCount}, baseCode = config.baseCode}, "lyq-base-inv")
+									object.count = lowCount
+									rednet.send(stationID, {type = "create_surplus", object = object, baseCode = config.baseCode}, "lyq-base-inv")
 									total = total + lowCount
 									--more infinite consumer safety
 									if info.count == true then break end
@@ -352,9 +324,10 @@ local function fillRequests()
 							for id, staInfo in pairs(stationInfo) do
 								if staInfo.type == "crafting-master" then
 									local count = info.count == true and 64 or info.count
-									local name, damage = normalizeName({combinedName = _name})
-									print("Crafting "..tostring(count).." of "..name.."-"..tostring(damage))
-									rednet.send(id, {type = "craft_object", objectType = objType, objectInfo = {name = name, damage = damage, count = count}, baseCode = config.baseCode}, "lyq-base-craft")
+									local object = base.fillObjectData({class = objType, hash = _name})
+									object.count = count
+									print("Crafting "..tostring(object.count).." of "..object.name.."-"..tostring(object.damage))
+									rednet.send(id, {type = "craft_object", object = object, baseCode = config.baseCode}, "lyq-base-craft")
 									break
 								end
 							end
@@ -493,66 +466,70 @@ while true do
 				io.write("\n")
 			elseif message.type == "object_surplus" then
 				--a station has too much of something.
-				local objectName = resolveObjectName(message.objectType, message.objectInfo)
-				if not surplus[message.objectType] then surplus[message.objectType] = {} end
-				if not surplus[message.objectType][objectName] then surplus[message.objectType][objectName] = {} end
-				if not surplus[message.objectType][objectName][event[2]] then surplus[message.objectType][objectName][event[2]] = {} end
-				local list = surplus[message.objectType][objectName][event[2]]
-				local found = false
-				if #list > 0 then
-					local loc = message.location
-					for i = 1, #list do
-						local listLoc = list[i].location
-						if areLocationsEqual(listLoc, loc) then
-							--add these, since stations send surplus messages whenever they dump something for pickup.
-							write("Updating surplus of "..message.objectInfo.name)
-							list[i].count = list[i].count + message.objectInfo.count
-							print(" to "..tostring(list[i].count))
-							found = true
-							break
+				local object = base.fillObjectData(message.object)
+				if object then
+					if not surplus[object.class] then surplus[object.class] = {} end
+					if not surplus[object.class][object.hash] then surplus[object.class][object.hash] = {} end
+					if not surplus[object.class][object.hash][event[2]] then surplus[object.class][object.hash][event[2]] = {} end
+					local list = surplus[object.class][object.hash][event[2]]
+					local found = false
+					if #list > 0 then
+						local loc = message.location
+						for i = 1, #list do
+							local listLoc = list[i].location
+							if areLocationsEqual(listLoc, loc) then
+								--add these, since stations send surplus messages whenever they dump something for pickup.
+								write("Updating surplus of "..object.name)
+								list[i].count = list[i].count + object.count
+								print(" to "..tostring(list[i].count))
+								found = true
+								break
+							end
 						end
 					end
-				end
-				if not found then
-					print("Recording surplus of "..tostring(message.objectInfo.count).." of "..message.objectInfo.name.."-"..message.objectInfo.damage)
-					table.insert(surplus[message.objectType][objectName][event[2]], {location = message.location, count = message.objectInfo.count})
+					if not found then
+						print("Recording surplus of "..tostring(object.count).." of "..object.name.."-"..object.damage)
+						table.insert(list, {location = message.location, count = object.count})
+					end
 				end
 			elseif message.type == "object_required" then
 				--a station has too little of something.
-				local objectName = resolveObjectName(message.objectType, message.objectInfo)
-				if not request[message.objectType] then request[message.objectType] = {} end
-				if not request[message.objectType][objectName] then request[message.objectType][objectName] = {} end
-				if not request[message.objectType][objectName][event[2]] then request[message.objectType][objectName][event[2]] = {} end
-				local list = request[message.objectType][objectName][event[2]]
-				local found = false
-				local info
-				if #list > 0 then
-					local loc = message.location
-					for i = 1, #list do
-						local listLoc = list[i].location
-						if areLocationsEqual(listLoc, loc) then
-							--update these, since stations update these as they change.
-							list[i].count = message.objectInfo.count
-							list[i].crafting = message.crafting or list[i].crafting
-							info = list[i]
-							found = true
-							break
+				local object = base.fillObjectData(message.object)
+				if object then
+					if not request[object.class] then request[object.class] = {} end
+					if not request[object.class][object.hash] then request[object.class][object.hash] = {} end
+					if not request[object.class][object.hash][event[2]] then request[object.class][object.hash][event[2]] = {} end
+					local list = request[object.class][object.hash][event[2]]
+					local found = false
+					local info
+					if #list > 0 then
+						local loc = message.location
+						for i = 1, #list do
+							local listLoc = list[i].location
+							if areLocationsEqual(listLoc, loc) then
+								--update these, since stations update these as they change.
+								list[i].count = object.count
+								list[i].crafting = message.crafting or list[i].crafting
+								info = list[i]
+								found = true
+								break
+							end
 						end
 					end
-				end
-				if not found then
-					print("Recording request of "..tostring(message.objectInfo.count).." of "..message.objectInfo.name.."-"..message.objectInfo.damage)
-					table.insert(list, {location = message.location, count = message.objectInfo.count, crafting = message.crafting})
-					info = list[#list]
-				end
-				if info.count == true and not info.total then
-					info.total = 0
-				end
-				if not info.crafting then
-					if info.count == true then
-						info.crafting = "none"
-					else
-						info.crafting = "allow"
+					if not found then
+						print("Recording request of "..tostring(object.count).." of "..object.name.."-"..object.damage)
+						table.insert(list, {location = message.location, count = object.count, crafting = message.crafting})
+						info = list[#list]
+					end
+					if info.count == true and not info.total then
+						info.total = 0
+					end
+					if not info.crafting then
+						if info.count == true then
+							info.crafting = "none"
+						else
+							info.crafting = "allow"
+						end
 					end
 				end
 			elseif message.type == "flight_base_info" then
