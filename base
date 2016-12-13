@@ -438,3 +438,30 @@ function setup(conf, location, face)
 		end
 	end
 end
+
+function fillObjectData(obj)
+	if obj.class == "item" then
+		if not obj.hash then
+			if obj.name and obj.damage then
+				if obj.damage > 0 then
+					obj.hash = obj.name.."-"..obj.damage
+				else
+					obj.hash = obj.name
+				end
+			end
+		end
+		if not obj.name then
+			if obj.hash then
+				local name, damage = string.match(obj.hash, "(.-)%-(%d+)$")
+				if name and damage then
+					obj.name, obj.damage = name, damage
+				else
+					obj.name, obj.damage = obj.hash, 0
+				end
+			end
+		end
+		return obj
+	else
+		return false
+	end
+end
