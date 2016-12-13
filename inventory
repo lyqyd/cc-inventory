@@ -1,11 +1,11 @@
---master computer
+--inventory computer
 --this program oversees the storage and retrieval of items in the storage system.
 
 --initial configuration defaults
 local config = {
-	--master configuration file
-	--in a north-facing setup (master north of service holes), rows are east-west and columns are north-south.
-	--facing is determined by which direction the master computer is from the service holes.
+	--inventory configuration file
+	--in a north-facing setup (computer north of service holes), rows are east-west and columns are north-south.
+	--facing is determined by which direction the center torch is from the computer.
 	facing = 1,
 	layers = 0,
 	rows = 6,
@@ -328,7 +328,7 @@ while true do
 		elseif event[4] == "lyq-base-inv" and event[3].baseCode == config.baseCode then
 			local message = event[3]
 			if message.type == "item_count" then
-				rednet.send(event[2], {type = "item_quantity", name = message.name, damage = message.damage, count = storage.getItemCount(message.name, message.damage), baseCode = config.baseCode}, "lyq-base-inv")
+				rednet.send(event[2], {type = "item_quantity", object = {class = "item", name = message.name, damage = message.damage, count = storage.getItemCount(message.name, message.damage)), baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "all_items" then
 				rednet.send(event[2], {type = "all_items_info", info = storage.getAllItemCounts(), baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "create_surplus" then
@@ -357,7 +357,7 @@ while true do
 					end
 				end
 			elseif message.type == "create_request" then
-				local itemData = message.objectInfo
+				local itemData = message.object
 				local queueMin, queueChoice = math.huge, -1
 				for i = 1, 4 do
 					local count = 0
@@ -370,7 +370,7 @@ while true do
 					end
 				end
 				table.insert(queues.request[queueChoice], itemData)
-				base.sendToBaseMaster({type = "object_required", objectType = "item", objectInfo = itemData, location = config.locations[queueChoice][1].location, crafting = "none", baseCode = config.baseCode}, "lyq-base")
+				base.sendToBaseMaster({type = "object_required", object = itemData, location = config.locations[queueChoice][1].location, crafting = "none", baseCode = config.baseCode}, "lyq-base")
 			elseif message.type == "free_space" then
 				rednet.send(event[2], {type = "free_space_count", info = storage.getSpaceRemaining(), baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "free_slots" then
@@ -399,7 +399,7 @@ while true do
 						queues.output[i]:add({route = route})
 						if info.count == 0 then
 							table.remove(queues.surplus[i], j)
-							base.sendToBaseMaster({type = "object_surplus", objectType = "item", objectInfo = {name = info.name, damage = info.damage, count = info.total}, location = config.locations[i][2].location})
+							base.sendToBaseMaster({type = "object_surplus", object = {class = "item", name = info.name, damage = info.damage, count = info.total}, location = config.locations[i][2].location})
 						end
 						found = true
 						break
