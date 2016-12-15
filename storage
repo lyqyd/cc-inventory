@@ -389,75 +389,66 @@ local function getCompoundName(data)
 	end
 end
 
-local function getStorageInfo(layer, row, column)
-	for i = 1, #config.storageBlocks do
-		if storageDatabase[layer][row][column].storage == config.storageBlocks[i].name then
-			return copy(config.storageBlocks[i])
+local function getStorageInfo(name)
+	for i, info in ipairs(config.storageBlocks) do
+		if name == info.name then
+			return copy(info)
 		end
 	end
 end
 
+local function getSlotsForItem(chest, item, includeEmpty)
+	local storeInfo = getStorageInfo(chest.storage)
+	local slots, n = {space = 0, total = 0, size = storeInfo.slotSize}, 0
+	for i, slot in ipairs(chest) do
+		if item.hash == slot.name or (includeEmpty and slot.name == "empty") then
+			n = n + 1
+			slots[n] = {num = i, name = slot.name, count = slot.count, space = storeInfo.slotSize - slot.count}
+			slots.total = slots.total + slot.count
+			slots.space = slots.space + slots[n].space
+		end
+	end
+	return slots
+end
+
 function store(itemData, side, queue)
-	local name = getCompoundName(itemData)
+	if not base.fillObjectData(itemData) then return false, "insufficient data" end
+	local hash = itemData.hash
 	local count = itemData.count
-	local route
-	if itemLookup[name] then
-		local slotList = {}
-		local loclist = {}
+	if itemLookup[hash] then
+		local slotMap, slotLookup, n = {}, {}, 0
 		for k, v in ipairs(itemLookup[name]) do
-			local store = storageDatabase[v[1]][v[2]][v[3]][v[4]]
-			if store.name then
-				--database agrees that this is here.
-				local precedingEmpty = false
-				for i = v[4], 1, -1 do
-					if storageDatabase[v[1]][v[2]][v[3]][i].name == "empty" then
-						precedingEmpty = true
-						break
-					end
-				end
-				if not precedingEmpty then
-					--no empty slots prior to this slot in this chest, so it is reachable.
-					if not itemDatabase[itemData.name] then
-						itemDatabase[itemData.name] = {}
-						itemDatabase[itemData.name].maxStackSize = 64
-					end
-					local maxStoredSize
-					local storeInfo = getStorageInfo(v[1], v[2], v[3])
-					if storeInfo then maxStoredSize = storeInfo.slotSize end
-					if maxStoredSize and store.count < maxStoredSize then
-						local newSlot = true
-						--see if this chest is already in our list of slots
-						for _, info in ipairs(slotList) do
-							if info.location[1] == v[1] and info.location[2] == v[2] and info.location[3] == v[3] then
-								--if so, then just add to the list of slots in that chest.
-								newSlot = false
-								info.space = info.space + (maxStoredSize - store.count)
-								table.insert(info.slots, {v[4], maxStoredSize - store.count})
-								table.sort(info.slots, function(a, b) return a[1] < b[1] end)
-								break
-							end
-						end
-						if newSlot then
-							table.insert(slotList, {space = maxStoredSize - store.count, location = {v[1], v[2], v[3]}, slots = {{v[4], maxStoredSize - store.count}}})
-						end
-					end
-				end
+			--build a list of all chests that already contain this item.
+			local layer, row, column, slot = v[1], v[2], v[3], v[4]
+			local locHash = tostring(layer)..";"..tostring(row)..";"..tostring(column)
+			if not slotMap[locHash] then
+				slotMap[locHash] = getSlotsForItem(storageDatabase[layer][row][column], itemData, true)
+				slotMap[locHash].location = {layer, row, column}
+				n = n + 1
+				slotLookup[n] = locHash
 			end
 		end
-		table.sort(slotList, function(a, b) return a.space > b.space end)
-		for i = 1, #slotList do
-			local flightQuantity = 0
-			local loc
-			for j = 1, #slotList[i].slots do
-				local moveQuantity = math.min(slotList[i].slots[j][2], count)
-				loc = slotList[i].location
-				storage.transaction(loc[1], loc[2], loc[3], slotList[i].slots[j][1], name, moveQuantity)
-				flightQuantity = flightQuantity + moveQuantity
-				count = count - moveQuantity
-				if count == 0 then break end
+		--sort the list by largest slot size.
+		table.sort(slotLookup, function(a, b) return slotMap[a].size > slotMap[b].size end)
+		--attempt to fill existing chests, using minimal flight counts.
+		for i, slotHash in ipairs(slotLookup) do
+			local slots = slotMap[slotHash]
+			local layer, row, column = slots.location[1], slots.location[2], slots.location[3]
+			local chest = storageDatabase[layer][row][column]
+			local total = 0
+			for j, slotInfo in ipairs(slots) do
+				if slotInfo.space > 0 then
+					local move = math.min(slotInfo.space, count - total)
+					storage.transaction(loc[1], loc[2], loc[3], slotInfo.num, hash, move)
+					total = total + move
+					if total == count then break end
+				end
 			end
-			route = createIntakeRoute(side, loc[1], loc[2], loc[3], flightQuantity)
-			queue(route)
+			if total > 0 then
+				--a flight is necessary, since we're moving some.
+				queue(createIntakeRoute(side, layer, row, column, total))
+			end
+			count = count - total
 			if count == 0 then break end
 		end
 	end
@@ -466,7 +457,7 @@ function store(itemData, side, queue)
 		for i = 1, #storageDatabase do
 			for j = 1, #storageDatabase[i] do
 				for k = 1, #storageDatabase[i][j] do
-					local storeInfo = getStorageInfo(i, j, k)
+					local storeInfo = getStorageInfo(storageDatabase[i][j][k].storage)
 					for slot = 1, storeInfo.slots or #storageDatabase[i][j][k] do
 						if not storageDatabase[i][j][k][slot] then storageDatabase[i][j][k][slot] = {name = "empty", count = 0} end
 						if storageDatabase[i][j][k][slot].name == "empty" then
@@ -475,8 +466,7 @@ function store(itemData, side, queue)
 							end
 							table.insert(itemLookup[name], {i, j, k, slot})
 							transaction(i, j, k, slot, name, count)
-							route = createIntakeRoute(side, i, j, k, count)
-							queue(route)
+							queue(createIntakeRoute(side, i, j, k, count))
 							count = 0
 							break
 						end
@@ -503,13 +493,14 @@ function retrieve(itemData, queue)
 	local slots = {}
 	local lookup = itemLookup[name]
 	for i, info in ipairs(lookup) do
-		if not storageInformation[info[1]] or not storageInformation[info[1]][info[2]] or not storageInformation[info[1]][info[2]][info[3]] then
-			storageInformation[info[1]] = storageInformation[info[1]] or {}
-			storageInformation[info[1]][info[2]] = storageInformation[info[1]][info[2]] or {}
-			storageInformation[info[1]][info[2]][info[3]] = storageInformation[info[1]][info[2]][info[3]] or {}
-			storageInformation[info[1]][info[2]][info[3]] = getStorageInfo(info[1], info[2], info[3])
+		local layer, row, column = info[1], info[2], info[3]
+		if not storageInformation[layer] or not storageInformation[layer][row] or not storageInformation[layer][row][column] then
+			storageInformation[layer] = storageInformation[layer] or {}
+			storageInformation[layer][row] = storageInformation[layer][row] or {}
+			storageInformation[layer][row][column] = storageInformation[layer][row][column] or {}
+			storageInformation[layer][row][column] = getStorageInfo(storageDatabase[layer][row][column].storage)
 		end
-		local storeInfo = storageInformation[info[1]][info[2]][info[3]]
+		local storeInfo = storageInformation[layer][row][column]
 		slots[storeInfo.slotSize] = slots[storeInfo.slotSize] or {}
 		table.insert(slots[storeInfo.slotSize], info)
 	end
