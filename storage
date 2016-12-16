@@ -60,13 +60,6 @@ local directions = {
 	},
 }
 
-local flightLevels = {
-	north = 92,
-	east = 93,
-	south = 93,
-	west = 92,
-}
-
 local baseRotations = {
 	{1, 2, 3, 4},
 	{4, 1, 2, 3},
@@ -84,6 +77,24 @@ local transformVec = {
 local storageInfo = {}
 for i, info in ipairs(config.storageBlocks) do
 	storageInfo[info.name] = info
+end
+
+local function copy(tab)
+	local ret = {}
+	for k, v in pairs(tab) do
+		if type(v) == "table" then
+			ret[k] = copy(v)
+		else
+			ret[k] = v
+		end
+	end
+	return ret
+end
+
+local function getStorageInfo(name)
+	if storageInfo[name] then
+		return copy(storageInfo[name])
+	end
 end
 
 local function prepareDatabase()
@@ -118,6 +129,11 @@ local function readStorageDatabase()
 					for item, quantity in string.gmatch(contents, "([%a%d%-]+:?[%a%d%-%^]+),(%d+);") do
 						table.insert(stored, {name = item, count = tonumber(quantity)})
 					end
+					if #stored < stored.slotCount then
+						for i = #stored + 1, stored.slotCount do
+							stored[i] = {name = "empty", count = 0}
+						end
+					end
 					storageDatabase[tonumber(layer)][tonumber(row)][tonumber(column)] = stored
 				end
 			end
@@ -134,15 +150,18 @@ local function writeStorageDatabase()
 				for j = 1, #storageDatabase[i] do
 					for k = 1, #storageDatabase[i][j] do
 						local entry = storageDatabase[i][j][k]
-						local str = tostring(i)..","..tostring(j)..","..tostring(k)..";"..tostring(entry.storage).." "
-						for i, info in ipairs(entry) do
-							str = str..tostring(info.name)..","..tostring(info.count)..";"
+						local str = ""
+						local empty = true
+						for i = #entry, 1, -1 do
+							--build slot contents string, skipping empty entries at the end.
+							local info = entry[i]
+							if empty == false or info.name ~= "empty" then
+								empty = false
+								str = tostring(info.name)..","..tostring(info.count)..";"..str
+							end
 						end
-						if #entry == 0 then str = str.."empty,0;" end
-						--trim excess empty slot designations from ends of lines.
-						while string.match(str, ";empty,0;$") do
-							str = string.match(str, "(.*;)empty,0;")
-						end
+						--prepend location/storage container information
+						str = tostring(i)..","..tostring(j)..","..tostring(k)..";"..tostring(entry.storage).." "..str
 						handle:write(str.."\n")
 					end
 				end
@@ -171,11 +190,7 @@ local function prepareLookupTable()
 end
 
 function initialize(configuration)
-	for k, v in pairs(configuration) do
-		if config[k] then
-			config[k] = v
-		end
-	end
+	config = copy(configuration)
 	prepareDatabase()
 	readStorageDatabase()
 	writeStorageDatabase()
@@ -363,18 +378,6 @@ function createOutputRoute(side)
 	return route
 end
 
-local function copy(tab)
-	local ret = {}
-	for k, v in pairs(tab) do
-		if type(v) == "table" then
-			ret[k] = copy(v)
-		else
-			ret[k] = v
-		end
-	end
-	return ret
-end
-
 function getItemsAt(layer, row, column)
 	return copy(storageDatabase[layer][row][column])
 end
@@ -386,14 +389,6 @@ local function getCompoundName(data)
 		return data.name.."-"..tostring(data.damage)
 	else
 		return data.name
-	end
-end
-
-local function getStorageInfo(name)
-	for i, info in ipairs(config.storageBlocks) do
-		if name == info.name then
-			return copy(info)
-		end
 	end
 end
 
@@ -417,7 +412,7 @@ function store(itemData, side, queue)
 	local count = itemData.count
 	if itemLookup[hash] then
 		local slotMap, slotLookup, n = {}, {}, 0
-		for k, v in ipairs(itemLookup[name]) do
+		for k, v in ipairs(itemLookup[hash]) do
 			--build a list of all chests that already contain this item.
 			local layer, row, column, slot = v[1], v[2], v[3], v[4]
 			local locHash = tostring(layer)..";"..tostring(row)..";"..tostring(column)
@@ -453,7 +448,7 @@ function store(itemData, side, queue)
 		end
 	end
 	if count > 0 then
-		--item wasn't yet in db, or existing slots didn't have enough room.  Allocate new slot/chest.
+		--item wasn't yet in db, or existing chests didn't have enough room.  Allocate new chest.
 		for i = 1, #storageDatabase do
 			for j = 1, #storageDatabase[i] do
 				for k = 1, #storageDatabase[i][j] do
@@ -461,11 +456,11 @@ function store(itemData, side, queue)
 					for slot = 1, storeInfo.slots or #storageDatabase[i][j][k] do
 						if not storageDatabase[i][j][k][slot] then storageDatabase[i][j][k][slot] = {name = "empty", count = 0} end
 						if storageDatabase[i][j][k][slot].name == "empty" then
-							if not itemLookup[name] then
-								itemLookup[name] = {}
+							if not itemLookup[hash] then
+								itemLookup[hash] = {}
 							end
-							table.insert(itemLookup[name], {i, j, k, slot})
-							transaction(i, j, k, slot, name, count)
+							table.insert(itemLookup[hash], {i, j, k, slot})
+							transaction(i, j, k, slot, hash, count)
 							queue(createIntakeRoute(side, i, j, k, count))
 							count = 0
 							break
