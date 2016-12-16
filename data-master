@@ -83,6 +83,19 @@ while true do
 							data[object.class][object.hash][k] = v
 						end
 					end
+					local prefix = string.match(object.hash, "^([%a%d]+):")
+					if prefix then
+						local group = {}
+						for hash, info in pairs(data[object.class]) do
+							if string.match(hash, "^([%a%d]+):") == prefix then
+								local object = {class = object.class, hash = hash}
+								base.fillObjectData(object)
+								local suffix = string.match(object.name, ":(.-)$")
+								group[suffix] = info
+							end
+						end
+						configuration.save(fs.combine(config.databasePath, object.class.."-"..prefix), group)
+					end
 				end
 			end
 		end
