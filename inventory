@@ -279,7 +279,7 @@ while true do
 			end
 		elseif event[4] == "lyq-base-inv" and event[3].baseCode == config.baseCode then
 			if message.type == "item_count" then
-				rednet.send(event[2], {type = "item_quantity", object = {class = "item", name = message.name, damage = message.damage, count = storage.getItemCount(message.name, message.damage)), baseCode = config.baseCode}, "lyq-base-inv")
+				rednet.send(event[2], {type = "item_quantity", object = {class = "item", name = message.name, damage = message.damage, count = storage.getItemCount(message.name, message.damage)}, baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "all_items" then
 				rednet.send(event[2], {type = "all_items_info", info = storage.getAllItemCounts(), baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "create_surplus" then

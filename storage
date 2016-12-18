@@ -289,7 +289,7 @@ local function moveToChest(start, chest, finish, action)
 		local zName = directions.z[config.facing][zDir / math.abs(zDir)]
 		return xName, math.abs(xDir), zName, math.abs(zDir)
 	end
-	info = {row = {}}, column = {}}
+	info = {row = {}, column = {}}
 	info.row.name, info.row.dist, info.column.name, info.column.dist = getRowAndColumn(start, chest)
 	if info.row.dist > 0 then
 		n = n + 1
@@ -316,7 +316,7 @@ function createStorageRoute(layer, row, column, count)
 	local n = #route
 	n = n + 1
 	route[n] = "suck "..tostring(count)
-	n = concatenate(route, pointToPoint(store, start)
+	n = concatenate(route, pointToPoint(store, start))
 	n = n + 1
 	route[n] = "down "..tostring(layer + 5)
 	n = concatenate(route, moveToChest(start, {x = row, z = column}, finish, "drop "..tostring(count)))
