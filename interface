@@ -5,6 +5,7 @@
 local config = {
 	-- base master configuration file
 	baseCode = "",
+	plainSearch = true
 }
 
 if not os.loadAPI("base") then error("Could not load base API!") end
@@ -22,8 +23,11 @@ peripheral.find("modem", function(name) rednet.open(name) end)
 
 base.initialize(config.baseCode)
 
+local data, step = {}, 0
 local items = {}
 local sortedItems = {}
+local search = ""
+local selected = ""
 local sorts = {
 	count = {
 		[1] = function(a, b) return a.count < b.count end,
@@ -40,9 +44,31 @@ local function rebuildItems()
 	local tab, n = {}, 0
 	for name, damages in pairs(items) do
 		for damage, count in pairs(damages) do
-			n = n + 1
-			tab[n] = {class = "item", name = name, damage = damage, count = count}
-			base.fillObjectData(tab[n])
+			local object = {class = "item", name = name, damage = damage, count = count}
+			base.fillObjectData(object)
+			if data[object.hash] then
+				object.prettyName = data[object.hash].name
+			end
+			if #search > 0 then
+				--only add items that meet the search criteria
+				local added = false
+				if object.prettyName then
+					if string.find(object.prettyName, search, 1, config.plainSearch) then
+						n = n + 1
+						tab[n] = object
+						added = true
+					end
+				end
+				if not added then
+					if string.find(object.name, search, 1, config.plainSearch) then
+						n = n + 1
+						tab[n] = object
+					end
+				end
+			else
+				n = n + 1
+				tab[n] = object
+			end
 		end
 	end
 	sortedItems = tab
@@ -73,6 +99,86 @@ local function getDisplayCount(count)
 	end
 end
 
+local function searchBar()
+	term.setCursorBlink( true )
+
+	local pos = 0
+
+	local w = term.getSize()
+	local sx = term.getCursorPos()
+
+	local function redraw()
+		local scroll = 0
+		if sx + pos >= w then
+			scroll = (sx + nPos) - w
+		end
+
+		local cx,cy = term.getCursorPos()
+		term.setCursorPos(sx, cy)
+		local viewLen = cx - sx + 1
+		if #search < viewLen then
+			term.write(search..string.rep(" ", viewLen - #search))
+		else
+			term.write(string.sub(search, scroll + 1))
+		end
+
+		term.setCursorPos(sx + pos - scroll, cy)
+	end
+
+	redraw()
+
+	while true do
+		local event = {os.pullEvent()}
+		if event[1] == "char" then
+			search = string.sub(search, 1, pos)..event[2]..string.sub(search, pos + 1)
+			pos = pos + 1
+			redraw()
+		elseif event[1] == "paste" then
+			search = string.sub(search, 1, pos)..event[2]..string.sub(search, pos + 1)
+			pos = pos + #event[2]
+			redraw()
+		elseif event[1] == "key" then
+			if event[2] == keys.enter then
+				
+			elseif event[2] == keys.left then
+				if pos > 0 then
+					pos = pos - 1
+					redraw()
+				end
+			elseif event[2] == keys.right then
+				if pos < #search then
+					pos = pos + 1
+					redraw()
+				end
+			elseif event[2] == keys.backspace then
+				if pos > 0 then
+					search = string.sub(search, 1, pos - 1)..string.sub(search, pos + 1)
+					pos = pos - 1
+					redraw()
+				end
+			elseif event[2] == keys.home then
+				if pos > 0 then
+					pos = 0
+					redraw()
+				end
+			elseif event[2] == keys.delete then
+				if pos < #search then
+					search = string.sub(search, 1, pos)..string.sub(search, pos + 2)
+					redraw()
+				end
+			elseif event[2] == keys["end"] then
+				if pos < #search then
+					pos = #search
+					redraw()
+				end
+			end
+		elseif event[1] == "term_resize" or event[1] == "window_resize" then
+			w = term.getSize()
+			redraw()
+		end
+	end
+end
+
 local function redraw()
 	term.clear()
 	term.setCursorPos(1, 1)
@@ -88,24 +194,71 @@ local function redraw()
 	end
 end
 
-while true do
-	local event = {base.handleEvents(os.pullEventRaw())}
-	if event[1] == "rednet_message" then
-		local message = event[3]
-		if event[4] == "lyq-base" and message.baseCode == config.baseCode then
-			if message.type == "master_online" then
-				--get list of all stored items
-				base.sendToBaseMaster({type = "all_items"}, "lyq-base-inv")
+local function list()
+	local scroll = 0
+
+	local function redraw()
+		term.clear()
+		term.setCursorPos(1, 1)
+		local x, y = term.getSize()
+		for i = 1, y do
+			local obj = sortedItems[scroll + i]
+			term.setCursorPos(1, i)
+			local line = " "
+			if obj then
+				if obj.prettyName then
+					line = line..obj.prettyName
+				else
+					line = line..obj.name.." "..obj.damage
+				end
+				local count = getDisplayCount(obj.count).." "
+				count = "|"..string.rep(" ", 8 - #count)..count
+				line = line..string.rep(" ", x - (#line + #count))..count
 			end
-		elseif event[4] == "lyq-base-inv" and message.baseCode == config.baseCode then
-			if message.type == "all_items_info" then
-				items = message.info
-				rebuildItems()
-				redraw()
-			end
+			term.write(line)
 		end
-	elseif event[1] == "terminate" then
-		print("Stopping")
-		return
+	end
+
+	rebuildItems()
+	redraw()
+	while true do
+		local event == {os.pullEvent()}
+		if event[1] == "key" then
+			--
+		end
 	end
 end
+
+local function communicate()
+	while true do
+		local event = {base.handleEvents(os.pullEventRaw())}
+		if event[1] == "rednet_message" then
+			local message = event[3]
+			if event[4] == "lyq-base" and message.baseCode == config.baseCode then
+				if message.type == "master_online" then
+					--get list of all stored items
+					base.sendToBaseMaster({type = "all_items"}, "lyq-base-inv")
+				end
+			elseif event[4] == "lyq-base-inv" and message.baseCode == config.baseCode then
+				if message.type == "all_items_info" then
+					items = message.info
+					rebuildItems()
+					redraw()
+				end
+			elseif event[4] == "lyq-base-data" and message.baseCode == config.baseCode then
+				if message.type == "object_data_info" then
+					data = message.data.item
+					step = message.step
+				elseif message.type == "object_data_step" then
+					if message.step ~= step then
+						rednet.send(event[2], {type = "object_data", baseCode = config.baseCode}, "lyq-base-data")
+					end
+				end
+			end
+		elseif event[1] == "terminate" then
+			print("Stopping")
+			return
+		end
+	end
+end
+
