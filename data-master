@@ -8,6 +8,7 @@ local config = {
 	databasePath = "/objectdata",
 }
 
+local step = 0
 local data = { --keyed by object class, then object hash.
 	item = {
 		default = {
@@ -54,6 +55,7 @@ for i, name in ipairs(files) do
 		end
 	end
 end
+step = step + 1
 
 base.initialize(config.baseCode)
 
@@ -95,8 +97,12 @@ while true do
 							end
 						end
 						configuration.save(fs.combine(config.databasePath, object.class.."-"..prefix), group)
+						step = step + 1
+						rednet.broadcast({type = "object_data_step", step = step, baseCode = config.baseCode}, "lyq-base-data")
 					end
 				end
+			elseif message.type == "object_data" then
+				rednet.send(event[2], {type = "object_data_info", data = data, step = step, baseCode = config.baseCode}, "lyq-base-data")
 			end
 		end
 	elseif event[1] == "terminate" then
