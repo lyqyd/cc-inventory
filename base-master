@@ -580,6 +580,20 @@ while true do
 		elseif event[4] == "lyq-base-inv" and message.baseCode == config.baseCode then
 			if message.type == "all_items_info" then
 				storage.item[event[2]] = message.info
+			elseif message.type == "all_items" then
+				local result = {}
+				for i, names in pairs(storage.item) do
+					for name, damages in pairs(names) do
+						if name ~= "empty" then
+							for damage, count in pairs(damages) do
+								if not result[name] then result[name] = {} end
+								if not result[name][damage] then result[name][damage] = 0 end
+								result[name][damage] = result[name][damage] + count
+							end
+						end
+					end
+				end
+				rednet.send(event[2], {type = "all_items_info", info = result, baseCode = config.baseCode}, "lyq-base-inv")
 			end
 		end
 	elseif event[1] == "timer" then
