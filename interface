@@ -18,7 +18,18 @@ if fs.exists("interface.conf") then
 else
 	--initial setup
 	print("Initial Setup for User Interface")
-	base.setup(config)
+	base.setup(config, true, "Determine the direction by looking directly at the front face of this computer.")
+	do
+		local facingVec = {
+			vector.new(1, 0, 0),
+			vector.new(0, 0, 1),
+			vector.new(-1, 0, 0),
+			vector.new(0, 0, -1)
+		}
+		config.locations = {
+			{location = config.location + facingVec[config.facing], capabilities = "accept-items"},
+		}
+	end
 	configuration.save("interface.conf", config)
 end
 
@@ -485,6 +496,8 @@ local function communicate()
 					end
 				end
 			end
+		elseif event[1] == "send_request" then
+			base.sendToBaseMaster({type = "object_required", object = {class = "item", hash = event[2], count = event[3]}, location = config.locations[1].location}, "lyq-base-inv")
 		elseif event[1] == "terminate" then
 			print("Stopping")
 			return
@@ -511,9 +524,14 @@ while true do
 	for name, info in pairs(co) do
 		if (info.filter and info.filter == event[1]) or event[1] == "terminate" then
 			if (not co.modal) or (name ~= "search" and name ~= "list") then
+				local finalEvent = {unpack(event)}
+				if string.match(event[1], "^mouse_") then
+					--double "buffer" not a mistake.
+					local finalEvent[3], finalEvent[4] = event[3] - info.buffer.buffer.xOffset, event[4] - info.buffer.buffer.yOffset
+				end
 				local _old = term.redirect(info.buffer)
 				--skip the search and list coroutines when modal dialog is active
-				local passback = {coroutine.resume(info.thread, unpack(event))}
+				local passback = {coroutine.resume(info.thread, unpack(finalEvent))}
 				if passback[1] then
 					info.filter = passback[2]
 				end
