@@ -11,6 +11,7 @@ local config = {
 }
 
 if not os.loadAPI("base") then error("Could not load base API!") end
+if not os.loadAPI("framebuffer") then error("Could not load framebuffer API!") end
 if not os.loadAPI("configuration") then error("Could not load configuration API!") end
 if fs.exists("interface.conf") then
 	config = configuration.load("interface.conf")
