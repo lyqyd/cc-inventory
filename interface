@@ -1,6 +1,8 @@
 --interface computer
 --this program is used by players to interact with the system.
 
+local unpack = unpack or table.unpack
+
 --initial configuration defaults
 local config = {
 	-- base master configuration file
@@ -23,19 +25,23 @@ peripheral.find("modem", function(name) rednet.open(name) end)
 
 base.initialize(config.baseCode)
 
+local width, height = term.getSize()
+local co = {}
 local data, step = {}, 0
 local items = {}
 local sortedItems = {}
 local search = ""
 local selected = ""
+local lineSelection = -1
+local chosen
 local sorts = {
 	count = {
 		[1] = function(a, b) return a.count < b.count end,
 		[-1] = function(a, b) return a.count > b.count end,
 	},
 	name = {
-		[1] = function(a, b) return a.name < b.name end,
-		[-1] = function(a, b) return a.name > b.name end,
+		[1] = function(a, b) return (a.prettyName or a.name) < (b.prettyName or b.name) end,
+		[-1] = function(a, b) return (a.prettyName or a.name) > (b.prettyName or b.name) end,
 	},
 }
 local sortType, sortDirection = "name", 1
@@ -73,6 +79,20 @@ local function rebuildItems()
 	end
 	sortedItems = tab
 	table.sort(sortedItems, sorts[sortType][sortDirection])
+	if #selected > 0 then
+		local found = false
+		for i, info in ipairs(sortedItems) do
+			if info.hash == selected then
+				lineSelection = i
+				found = true
+				break
+			end
+		end
+		if not found then
+			lineSelection = -1
+			selected = ""
+		end
+	end
 end
 
 local function getDisplayCount(count)
@@ -99,15 +119,154 @@ local function getDisplayCount(count)
 	end
 end
 
+local function modal()
+	local quantity = ""
+	local w, h = term.getSize()
+	local blankLine = string.rep(" ", w)
+	local pos, sx = 0, 2
+
+	local function redraw()
+		term.setBackgroundColor(colors.lightGray)
+		term.setCursorPos(1, 1)
+		term.write(blankLine)
+		term.setCursorPos(1, 2)
+		term.write(" Desired Quantity: ")
+		term.setCursorPos(1, 3)
+		term.write(blankLine)
+		do
+			--quantity input line
+			term.setCursorPos(1, 4)
+			term.write(" ")
+			local width = w - 2
+			term.setBackgroundColor(colors.white)
+			term.setTextColor(colors.black)
+			local scroll = 0
+			if sx + pos >= width then
+				scroll = (sx + nPos) - width
+			end
+
+			local cx,cy = term.getCursorPos()
+			term.setCursorPos(sx, cy)
+			local viewLen = cx - sx + 1
+			if #quantity < viewLen then
+				term.write(quantity..string.rep(" ", viewLen - #quantity))
+			else
+				term.write(string.sub(quantity, scroll + 1))
+			end
+			term.setBackgroundColor(colors.lightGray)
+			term.setTextColor(colors.white)
+			term.write(" ")
+		end
+		term.setCursorPos(1, 5)
+		term.write(blankLine)
+		do
+			--ok/cancel line
+			term.setCursorPos(1, 6)
+			term.write(" ")
+			term.setBackgroundColor(colors.lime)
+			term.write("   OK   ")
+			term.setBackgroundColor(colors.lightGray)
+			term.write(" ")
+			term.setBackgroundColor(colors.red)
+			term.write(" CANCEL ")
+			term.setBackgroundColor(colors.lightGray)
+			term.write(" ")
+		end
+		term.setCursorPos(1, 7)
+		term.write(blankLine)
+	end
+
+	redraw()
+
+	while true do
+		local event = {os.pullEvent()}
+		if event[1] == "char" then
+			quantity = string.sub(quantity, 1, pos)..event[2]..string.sub(quantity, pos + 1)
+			pos = pos + 1
+			redraw()
+		elseif event[1] == "paste" then
+			quantity = string.sub(quantity, 1, pos)..event[2]..string.sub(quantity, pos + 1)
+			pos = pos + #event[2]
+			redraw()
+		elseif event[1] == "key" then
+			if event[2] == keys.enter then
+				local num = tonumber(quantity)
+				if num and num == math.floor(num) then
+					os.queueEvent("send_request", chosen, num)
+					chosen = nil
+					return
+				end
+			elseif event[2] == keys.left then
+				if pos > 0 then
+					pos = pos - 1
+					redraw()
+				end
+			elseif event[2] == keys.right then
+				if pos < #quantity then
+					pos = pos + 1
+					redraw()
+				end
+			elseif event[2] == keys.backspace then
+				if pos > 0 then
+					quantity = string.sub(quantity, 1, pos - 1)..string.sub(quantity, pos + 1)
+					pos = pos - 1
+					redraw()
+				elseif #quantity == 0 then
+					return
+				end
+			elseif event[2] == keys.home then
+				if pos > 0 then
+					pos = 0
+					redraw()
+				end
+			elseif event[2] == keys.delete then
+				if pos < #quantity then
+					quantity = string.sub(quantity, 1, pos)..string.sub(quantity, pos + 2)
+					redraw()
+				end
+			elseif event[2] == keys["end"] then
+				if pos < #quantity then
+					pos = #quantity
+					redraw()
+				end
+			end
+		elseif event[1] == "mouse_click" and event[2] == 1 and event[4] == 6 then
+			if x >= 2 and x <= 9 then
+				local num = tonumber(quantity)
+				if num and num == math.floor(num) then
+					os.queueEvent("send_request", chosen, num)
+				end
+				chosen = nil
+				return
+			elseif x >= 11 and x <= 18 then
+				chosen = nil
+				return
+			end
+		elseif event[1] == "redraw" then
+			redraw()
+		end
+	end
+end
+
+local function buildModal()
+	xOffset = (width - 19) / 2 + 1
+	yOffset = (height - 7) / 2 + 1
+	co.modal = {thread = coroutine.create(modal), buffer = framebuffer.new(19, 7, term.isColor(), xOffset, yOffset)}
+	coroutine.resume(co.modal.thread)
+end
+
+
 local function searchBar()
 	term.setCursorBlink( true )
 
 	local pos = 0
 
-	local w = term.getSize()
+	local w = (term.getSize()) - 2
 	local sx = term.getCursorPos()
 
 	local function redraw()
+		term.setBackgroundColor(colors.white)
+		term.setTextColor(colors.black)
 		local scroll = 0
 		if sx + pos >= w then
 			scroll = (sx + nPos) - w
@@ -118,9 +277,14 @@ local function searchBar()
 		local viewLen = cx - sx + 1
 		if #search < viewLen then
 			term.write(search..string.rep(" ", viewLen - #search))
+			term.setTextColor(colors.red)
+			term.write(" X")
 		else
 			term.write(string.sub(search, scroll + 1))
+			term.setTextColor(colors.red)
+			term.write(" X")
 		end
+		term.setTextColor(colors.black)
 
 		term.setCursorPos(sx + pos - scroll, cy)
 	end
@@ -139,7 +303,13 @@ local function searchBar()
 			redraw()
 		elseif event[1] == "key" then
 			if event[2] == keys.enter then
-				
+				local chosen
+				if #selected > 0 then
+					chosen = selected
+				else
+					chosen = sortedItems[1].hash
+				end
+				buildModal()
 			elseif event[2] == keys.left then
 				if pos > 0 then
 					pos = pos - 1
@@ -173,23 +343,10 @@ local function searchBar()
 				end
 			end
 		elseif event[1] == "term_resize" or event[1] == "window_resize" then
-			w = term.getSize()
+			w = (term.getSize()) - 2
 			redraw()
-		end
-	end
-end
-
-local function redraw()
-	term.clear()
-	term.setCursorPos(1, 1)
-	local x, y = term.getSize()
-	for i = 1, y do
-		term.setCursorPos(2, i)
-		local object = sortedItems[i]
-		if object then
-			term.write(object.name)
-			term.setCursorPos(x - 5, i)
-			term.write(getDisplayCount(object.count))
+		elseif event[1] == "redraw" then
+			redraw()
 		end
 	end
 end
@@ -215,7 +372,33 @@ local function list()
 				count = "|"..string.rep(" ", 8 - #count)..count
 				line = line..string.rep(" ", x - (#line + #count))..count
 			end
+			term.setBackgroundColor(i % 2 == 0 and colors.black or colors.gray)
+			term.setTextColor(colors.white)
 			term.write(line)
+		end
+	end
+
+	local function scrollUp(dist)
+		local delta = 0
+		if scroll > 0 then
+			delta = scroll
+			scroll = math.max(scroll - dist, 0)
+			delta = delta - scroll
+		end
+		if lineSelection > 0 then
+			lineSelection = math.max(lineSelection - delta, 1)
+		end
+	end
+
+	local function scrollDown(dist)
+		local delta = 0
+		if scroll + y < #sortedItems then
+			delta = scroll
+			scroll = math.min(scroll + dist, #sortedItems - y)
+			delta = scroll - delta
+		end
+		if lineSelection > 0 then
+			lineSelection = math.min(lineSelection + delta, #sortedItems)
 		end
 	end
 
@@ -224,7 +407,54 @@ local function list()
 	while true do
 		local event == {os.pullEvent()}
 		if event[1] == "key" then
-			--
+			if event[2] == keys.down then
+				if lineSelection < 0 then
+					lineSelection = scroll + 1
+				else
+					lineSelection = lineSelection + 1
+				end
+				if lineSelection - scroll > y / 2 and scroll + y < #sortedItems then
+					scroll = scroll + 1
+				end
+			elseif event[2] == keys.up then
+				if lineSelection > 1 then
+					lineSelection = lineSelection - 1
+				elseif lineSelection == 1 then
+					lineSelection = -1
+				end
+				if lineSelection - scroll < y / 2 and scroll > 0 then
+					scroll = scroll - 1
+				end
+			elseif event[2] == keys.pageUp then
+				scrollUp(y - 1)
+			elseif event[2] == keys.pageDown then
+				scrollDown(y - 1)
+			end
+			selected = sortedItems[lineSelection].hash
+			rebuildItems()
+			redraw()
+		elseif event[1] == "char" then
+			rebuildItems()
+			redraw()
+		elseif event[1] == "mouse_click" then
+			if event[2] == 1 then
+				--left click, choose that item
+				chosen = sortedItems[scroll + event[4]].hash
+				buildModal()
+			elseif event[2] == 2 then
+				--right click, show context menu
+			end
+		elseif event[1] == "mouse_scroll" then
+			if event[2] == -1 then
+				scrollUp(3)
+			elseif event[2] == 1 then
+				scrollDown(3)
+			end
+			rebuildItems()
+			redraw()
+		elseif event[1] == "redraw" then
+			rebuildItems()
+			redraw()
 		end
 	end
 end
@@ -242,8 +472,7 @@ local function communicate()
 			elseif event[4] == "lyq-base-inv" and message.baseCode == config.baseCode then
 				if message.type == "all_items_info" then
 					items = message.info
-					rebuildItems()
-					redraw()
+					os.queueEvent("redraw")
 				end
 			elseif event[4] == "lyq-base-data" and message.baseCode == config.baseCode then
 				if message.type == "object_data_info" then
@@ -262,3 +491,44 @@ local function communicate()
 	end
 end
 
+do
+	local w, h = term.getSize()
+	co.search = {thread = coroutine.create(searchBar), buffer = framebuffer.new(w, 1, term.isColor())}
+	co.list = {thread = coroutine.create(list), buffer = framebuffer.new(w, h - 1, term.isColor(), 0, 1)}
+	co.comm = {thread = coroutine.create(communicate), buffer = framebuffer.new()}
+end
+
+for name, info in pairs(co) do
+	local passback = {coroutine.resume(info.thread)}
+	if passback[1] then
+		info.filter = passback[2]
+	end
+end
+
+while true do
+	local event = {coroutine.yield()}
+	for name, info in pairs(co) do
+		if (info.filter and info.filter == event[1]) or event[1] == "terminate" then
+			if (not co.modal) or (name ~= "search" and name ~= "list") then
+				local _old = term.redirect(info.buffer)
+				--skip the search and list coroutines when modal dialog is active
+				local passback = {coroutine.resume(info.thread, unpack(event))}
+				if passback[1] then
+					info.filter = passback[2]
+				end
+				if _old then
+					term.redirect(_old)
+				else
+					term.restore()
+				end
+			end
+		end
+	end
+	if co.modal and coroutine.status(co.modal.thread) == "dead" then co.modal = nil end
+	framebuffer.draw(co.search.buffer)
+	framebuffer.draw(co.list.buffer)
+	if co.modal then framebuffer.draw(co.modal.buffer) end
+	for name, info in pairs(co) do
+		if coroutine.status(info.thread) == "dead" then return end
+	end
+end
