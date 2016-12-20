@@ -1,0 +1,44 @@
+function load(path)
+	local objects = {}
+	local files = fs.list(path)
+	for i, name in ipairs(files) do
+		local class, prefix = string.match(name, "^(%a+)-(.*)")
+		if class and prefix then
+			if not objects[class] then objects[class] = {} end
+			local contents = configuration.load(fs.combine(path, name))
+			for suffix, entries in pairs(contents) do
+				for damage, info in pairs(entries) do
+					local object = {name = prefix..":"..suffix, damage = damage, class = class}
+					base.fillObjectData(object)
+					objects[class][object.hash] = info
+				end
+			end
+		end
+	end
+	return objects
+end
+
+function save(path, objects, _class, domain)
+	local groups = {}
+	for class, hashes in pairs(objects) do
+		if (not _class) or (class = _class) then
+			groups[class] = {}
+			for hash, info in pairs(hashes) do
+				local prefix = string.match(hash, "^([%a%d]+):")
+				if (not domain) or (prefix == domain) then
+					if not groups[class][prefix] then groups[class][prefix] = {} end
+					local object = {class = class, hash = hash}
+					base.fillObjectData(object)
+					local suffix = string.match(object.name, ":(.-)$")
+					if not groups[class][prefix][suffix] then groups[class][prefix][suffix] = {} end
+					groups[class][prefix][suffix][damage] = info
+				end
+			end
+		end
+	end
+	for class, prefixes in pairs(groups) do
+		for prefix, info in pairs(prefixes) do
+			configuration.save(fs.combine(path, class.."-"..prefix), info)
+		end
+	end
+end
