@@ -43,28 +43,22 @@ local direction = {
 
 local directions = {
 	x = {
-		{[1] = "east", [-1] = "west"},
 		{[1] = "south", [-1] = "north"},
 		{[1] = "west", [-1] = "east"},
 		{[1] = "north", [-1] = "south"},
+		{[1] = "east", [-1] = "west"}
 	},
 	y = {
 		[1] = "up",
 		[-1] = "down",
 	},
 	z = {
+		{[1] = "east", [-1] = "west"},
 		{[1] = "south", [-1] = "north"},
 		{[1] = "west", [-1] = "east"},
 		{[1] = "north", [-1] = "south"},
-		{[1] = "east", [-1] = "west"},
+		
 	},
-}
-
-local baseRotations = {
-	{1, 2, 3, 4},
-	{4, 1, 2, 3},
-	{3, 4, 1, 2},
-	{2, 3, 4, 1},
 }
 
 local transformVec = {
@@ -335,9 +329,10 @@ function createRetrievalRoute(layer, row, column, count, data)
 	route[n] = "filter "..tostring(data.name).." "..tostring(data.damage)
 	n = n + 1
 	route[n] = "down "..tostring(layer + 5)
-	n = concatenate(route, moveToChest(start, {x = row, z = column}, finish, "suck "..tostring(count)))
+	local layerMod = (layer + 1) % #config.layout.layers + 1
+	n = concatenate(route, moveToChest(start, {x = config.layout.rows[row], z = config.layout.layers[layerMod][column]}, finish, "suck "..tostring(count)))
 	n = n + 1
-	route[n] = "up"..tostring(layer + 5)
+	route[n] = "up "..tostring(layer + 5)
 	n = concatenate(route, pointToPoint(finish, retrieve))
 	n = n + 1
 	route[n] = "drop "..tostring(count)
@@ -346,8 +341,8 @@ function createRetrievalRoute(layer, row, column, count, data)
 end
 
 function createIntakeRoute(side, layer, row, column, count)
-	local base = {x = config.layout.bases[baseRotations[config.facing][side]][1], z = config.layout.bases[baseRotations[config.facing][side]][2]}
-	local input = vector.new(base.x, 0, base.z) + transformVec[side][2]
+	local base = {x = config.layout.bases[side][1], z = config.layout.bases[side][2]}
+	local input = vector.new(base.x, 0, base.z) + transformVec[side][1]
 	local start, finish = {x = config.layout.shafts[1][1], z = config.layout.shafts[1][2]}, {x = config.layout.shafts[2][1], z = config.layout.shafts[2][2]}
 	local route = pointToPoint(base, input, true)
 	local n = #route
@@ -356,24 +351,25 @@ function createIntakeRoute(side, layer, row, column, count)
 	n = concatenate(route, pointToPoint(input, start))
 	n = n + 1
 	route[n] = "down "..tostring(layer + 5)
-	n = concatenate(route, moveToChest(start, {x = row, z = column}, finish, "drop "..tostring(count)))
+	local layerMod = (layer + 1) % #config.layout.layers + 1
+	n = concatenate(route, moveToChest(start, {x = config.layout.rows[row], z = config.layout.layers[layerMod][column]}, finish, "drop "..tostring(count)))
 	n = n + 1
 	route[n] = "up "..tostring(layer + 5)
 	concatenate(route, pointToPoint(finish, base))
 	return route
 end
 
-function createOutputRoute(side)
-	local base = {x = config.layout.bases[baseRotations[config.facing][side]][1], z = config.layout.bases[baseRotations[config.facing][side]][2]}
+function createOutputRoute(side, count)
+	local base = {x = config.layout.bases[side][1], z = config.layout.bases[side][2]}
 	local retrieve = {x = config.layout.retrieve[1], z = config.layout.retrieve[2]}
 	local out = vector.new(base.x, 0, base.z) + transformVec[side][2]
 	local route = pointToPoint(base, retrieve)
 	local n = #route
 	n = n + 1
-	route[n] = "suck"
+	route[n] = "suck "..tostring(count)
 	n = concatenate(route, pointToPoint(retrieve, out, true))
 	n = n + 1
-	route[n] = "drop"
+	route[n] = "drop "..tostring(count)
 	concatenate(route, pointToPoint(out, base))
 	return route
 end
@@ -434,7 +430,7 @@ function store(itemData, side, queue)
 			for j, slotInfo in ipairs(slots) do
 				if slotInfo.space > 0 then
 					local move = math.min(slotInfo.space, count - total)
-					storage.transaction(loc[1], loc[2], loc[3], slotInfo.num, hash, move)
+					storage.transaction(layer, row, column, slotInfo.num, hash, move)
 					total = total + move
 					if total == count then break end
 				end

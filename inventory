@@ -115,7 +115,7 @@ else
 			write("> ")
 			answer = tonumber(read())
 			if answer and config.counters[answer] == nil then
-				config.counters[answer] = counters[i]
+				config.counters[baseRotation[config.facing][answer]] = counters[i]
 				break
 			else
 				answer = nil
@@ -148,7 +148,7 @@ else
 			write("> ")
 			answer = tonumber(read())
 			if answer and config.counters[answer] and config.bases[answer] == nil then
-				config.bases[answer] = bases[i]
+				config.bases[baseRotation[config.facing][answer]] = bases[i]
 				break
 			else
 				answer = nil
@@ -182,7 +182,7 @@ else
 				fVec = facingVec[config.facing]
 				inVec = vector.new(inVec.x * fVec.x, inVec.y * fVec.y, inVec.z * fVec.z)
 				outVec = vector.new(outVec.x * fVec.x, outVec.y * fVec.y, outVec.z * fVec.z)
-				config.locations[baseRotations[config.facing][i]] = {
+				config.locations[i] = {
 					{location = config.location + inVec, capabilities = "accept-items"},
 					{location = config.location + outVec, capabilities = "output-items"},
 				}
@@ -283,7 +283,7 @@ while true do
 			elseif message.type == "all_items" then
 				rednet.send(event[2], {type = "all_items_info", info = storage.getAllItemCounts(), baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "create_surplus" then
-				local itemData = message.objectInfo
+				local itemData = message.object
 				local queueMin, queueChoice = math.huge, -1
 				for i = 1, 4 do
 					local count = 0
@@ -341,28 +341,30 @@ while true do
 		elseif side == config.retrievalSide then
 			print("Retrieved "..tostring(count).." of "..name.."-"..damage)
 			local found = false
+			local total = 0
 			for j = 1, math.max(#queues.surplus[1], #queues.surplus[2], #queues.surplus[3], #queues.surplus[4]) do
 				for i = 1, 4 do
 					local info = queues.surplus[i][j]
-					if info and info.name == name and info.damage == damage and (info.count == count or (info.count > 64 and count == 64) or count == info.count % 64) then
-						info.count = info.count - count
-						local route = storage.createOutputRoute(i)
+					if info and info.name == name and info.damage == damage then
+						local move = math.min(info.count, count - total)
+						info.count = info.count - move
+						total = total + move
+						local route = storage.createOutputRoute(i, move)
 						queues.output[i]:add({route = route})
 						if info.count == 0 then
 							table.remove(queues.surplus[i], j)
 							base.sendToBaseMaster({type = "object_surplus", object = {class = "item", name = info.name, damage = info.damage, count = info.total}, location = config.locations[i][2].location})
 						end
-						found = true
-						break
+						if total == count then break end
 					end
 				end
-				if found then break end
+				if total == count  then break end
 			end
 		else
 			--one of the intake sides
 			local side = counterLookup[side]
 			print("Storing "..tostring(count).." of "..name.."-"..damage)
-			storage.store({name = name, damage = damage, count = count}, side, function(route) queues.intake[side]:add({route = route}) end)
+			storage.store({class = "item", name = name, damage = damage, count = count}, side, function(route) queues.intake[side]:add({route = route}) end)
 			itemsStored = itemsStored + 1
 			checkRemainingSpace()
 			if #queues.request[side] > 0 then
