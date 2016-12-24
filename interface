@@ -35,7 +35,12 @@ end
 
 peripheral.find("modem", function(name) rednet.open(name) end)
 
-base.initialize(config.baseCode)
+local stationInfo = {
+	type = "interface",
+	locations = config.locations,
+}
+
+base.initialize(config.baseCode, stationInfo)
 
 local width, height = term.getSize()
 local co = {}
@@ -149,21 +154,21 @@ local function modal()
 			--quantity input line
 			term.setCursorPos(1, 4)
 			term.write(" ")
-			local width = w - 2
+			local width = w - 1
 			term.setBackgroundColor(colors.white)
 			term.setTextColor(colors.black)
 			local scroll = 0
 			if sx + pos >= width then
-				scroll = (sx + nPos) - width
+				scroll = (sx + pos) - width
 			end
 
 			local cx,cy = term.getCursorPos()
 			term.setCursorPos(sx, cy)
-			local viewLen = cx - sx + 1
+			local viewLen = width - sx + 1
 			if #quantity < viewLen then
 				term.write(quantity..string.rep(" ", viewLen - #quantity))
 			else
-				term.write(string.sub(quantity, scroll + 1))
+				term.write(string.sub(quantity, scroll + 1).." ")
 			end
 			term.setBackgroundColor(colors.lightGray)
 			term.setTextColor(colors.white)
@@ -243,7 +248,7 @@ local function modal()
 				end
 			end
 		elseif event[1] == "mouse_click" and event[2] == 1 and event[4] == 6 then
-			if x >= 2 and x <= 9 then
+			if event[3] >= 2 and event[3] <= 9 then
 				local num = tonumber(quantity)
 				if num and num == math.floor(num) then
 					os.queueEvent("send_request", chosen, num)
@@ -263,8 +268,14 @@ end
 local function buildModal()
 	xOffset = (width - 19) / 2 + 1
 	yOffset = (height - 7) / 2 + 1
-	co.modal = {thread = coroutine.create(modal), buffer = framebuffer.new(19, 7, term.isColor(), xOffset, yOffset)}
+	co.modal = {thread = coroutine.create(modal), redirect = framebuffer.new(19, 7, term.isColor(), xOffset, yOffset)}
+	local _old = term.redirect(co.modal.redirect)
 	coroutine.resume(co.modal.thread)
+	if _old then
+		term.redirect(_old)
+	else
+		term.restore()
+	end
 end
 
 
@@ -281,12 +292,12 @@ local function searchBar()
 		term.setTextColor(colors.black)
 		local scroll = 0
 		if sx + pos >= w then
-			scroll = (sx + nPos) - w
+			scroll = (sx + pos) - w
 		end
 
 		local cx,cy = term.getCursorPos()
 		term.setCursorPos(sx, cy)
-		local viewLen = cx - sx + 1
+		local viewLen = w - sx + 1
 		if #search < viewLen then
 			term.write(search..string.rep(" ", viewLen - #search))
 			term.setTextColor(colors.red)
@@ -383,6 +394,8 @@ local function list()
 				local count = getDisplayCount(obj.count).." "
 				count = "|"..string.rep(" ", 8 - #count)..count
 				line = line..string.rep(" ", x - (#line + #count))..count
+			else
+				line = string.rep(" ", x)
 			end
 			term.setBackgroundColor(i % 2 == 0 and colors.black or colors.gray)
 			term.setTextColor(colors.white)
@@ -417,7 +430,7 @@ local function list()
 	rebuildItems()
 	redraw()
 	while true do
-		local event == {os.pullEvent()}
+		local event = {os.pullEvent()}
 		if event[1] == "key" then
 			if event[2] == keys.down then
 				if lineSelection < 0 then
@@ -442,7 +455,11 @@ local function list()
 			elseif event[2] == keys.pageDown then
 				scrollDown(y - 1)
 			end
-			selected = sortedItems[lineSelection].hash
+			if lineSelection > 0 then
+				selected = sortedItems[lineSelection].hash
+			else
+				selected = ""
+			end
 			rebuildItems()
 			redraw()
 		elseif event[1] == "char" then
@@ -451,8 +468,10 @@ local function list()
 		elseif event[1] == "mouse_click" then
 			if event[2] == 1 then
 				--left click, choose that item
-				chosen = sortedItems[scroll + event[4]].hash
-				buildModal()
+				if sortedItems[scroll + event[4]] then
+					chosen = sortedItems[scroll + event[4]].hash
+					buildModal()
+				end
 			elseif event[2] == 2 then
 				--right click, show context menu
 			end
@@ -471,6 +490,8 @@ local function list()
 	end
 end
 
+local itemRefreshTimer
+
 local function communicate()
 	while true do
 		local event = {base.handleEvents(os.pullEventRaw())}
@@ -480,10 +501,12 @@ local function communicate()
 				if message.type == "master_online" then
 					--get list of all stored items
 					base.sendToBaseMaster({type = "all_items"}, "lyq-base-inv")
+
 				end
 			elseif event[4] == "lyq-base-inv" and message.baseCode == config.baseCode then
 				if message.type == "all_items_info" then
 					items = message.info
+					itemRefreshTimer = os.startTimer(3)
 					os.queueEvent("redraw")
 				end
 			elseif event[4] == "lyq-base-data" and message.baseCode == config.baseCode then
@@ -497,7 +520,10 @@ local function communicate()
 				end
 			end
 		elseif event[1] == "send_request" then
-			base.sendToBaseMaster({type = "object_required", object = {class = "item", hash = event[2], count = event[3]}, location = config.locations[1].location}, "lyq-base-inv")
+			base.sendToBaseMaster({type = "object_required", object = {class = "item", hash = event[2], count = event[3]}, location = config.locations[1].location}, "lyq-base")
+		elseif event[1] == "timer" and event[2] == itemRefreshTimer then
+			base.sendToBaseMaster({type = "all_items"}, "lyq-base-inv")
+			itemRefreshTimer = os.startTimer(3)
 		elseif event[1] == "terminate" then
 			print("Stopping")
 			return
@@ -507,13 +533,19 @@ end
 
 do
 	local w, h = term.getSize()
-	co.search = {thread = coroutine.create(searchBar), buffer = framebuffer.new(w, 1, term.isColor())}
-	co.list = {thread = coroutine.create(list), buffer = framebuffer.new(w, h - 1, term.isColor(), 0, 1)}
-	co.comm = {thread = coroutine.create(communicate), buffer = framebuffer.new()}
+	co.search = {thread = coroutine.create(searchBar), redirect = framebuffer.new(w, 1, term.isColor())}
+	co.list = {thread = coroutine.create(list), redirect = framebuffer.new(w, h - 1, term.isColor(), 0, 1)}
+	co.comm = {thread = coroutine.create(communicate), redirect = framebuffer.new()}
 end
 
 for name, info in pairs(co) do
+	local _old = term.redirect(info.redirect)
 	local passback = {coroutine.resume(info.thread)}
+	if _old then
+		term.redirect(_old)
+	else
+		term.restore()
+	end
 	if passback[1] then
 		info.filter = passback[2]
 	end
@@ -522,31 +554,33 @@ end
 while true do
 	local event = {coroutine.yield()}
 	for name, info in pairs(co) do
-		if (info.filter and info.filter == event[1]) or event[1] == "terminate" then
-			if (not co.modal) or (name ~= "search" and name ~= "list") then
+		if (info.filter and info.filter == event[1]) or event[1] == "terminate" or not info.filter then
+			if (co.modal == nil) or (name ~= "search" and name ~= "list") then
 				local finalEvent = {unpack(event)}
 				if string.match(event[1], "^mouse_") then
-					--double "buffer" not a mistake.
-					local finalEvent[3], finalEvent[4] = event[3] - info.buffer.buffer.xOffset, event[4] - info.buffer.buffer.yOffset
+					finalEvent[3], finalEvent[4] = event[3] - info.redirect.buffer.xOffset, event[4] - info.redirect.buffer.yOffset
 				end
-				local _old = term.redirect(info.buffer)
+				local _old = term.redirect(info.redirect)
 				--skip the search and list coroutines when modal dialog is active
 				local passback = {coroutine.resume(info.thread, unpack(finalEvent))}
-				if passback[1] then
-					info.filter = passback[2]
-				end
 				if _old then
 					term.redirect(_old)
 				else
 					term.restore()
 				end
+				if passback[1] then
+					info.filter = passback[2]
+				else
+					print(passback[2])
+					return
+				end
 			end
 		end
 	end
 	if co.modal and coroutine.status(co.modal.thread) == "dead" then co.modal = nil end
-	framebuffer.draw(co.search.buffer)
-	framebuffer.draw(co.list.buffer)
-	if co.modal then framebuffer.draw(co.modal.buffer) end
+	framebuffer.draw(co.search.redirect.buffer)
+	framebuffer.draw(co.list.redirect.buffer)
+	if co.modal then framebuffer.draw(co.modal.redirect.buffer) end
 	for name, info in pairs(co) do
 		if coroutine.status(info.thread) == "dead" then return end
 	end
