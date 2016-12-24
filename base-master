@@ -310,7 +310,7 @@ local function fillRequests()
 									--failure to find a storage facility
 									break
 								else
-									print("Creating surplus of "..tostring(lowCount).." of "..name.."-"..tostring(damage))
+									print("Creating surplus of "..tostring(lowCount).." of "..object.name.."-"..tostring(object.damage))
 									object.count = lowCount
 									rednet.send(stationID, {type = "create_surplus", object = object, baseCode = config.baseCode}, "lyq-base-inv")
 									total = total + lowCount
