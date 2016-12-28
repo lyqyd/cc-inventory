@@ -40,6 +40,8 @@ local stationInfo = {
 	locations = config.locations,
 }
 
+base.addSubscription("pretty", "lyq-base-data-pretty")
+base.addSubscription("item", "lyq-base-data-item")
 base.initialize(config.baseCode, stationInfo)
 
 local width, height = term.getSize()
@@ -61,7 +63,7 @@ local sorts = {
 		[-1] = function(a, b) return (a.prettyName or a.name) > (b.prettyName or b.name) end,
 	},
 }
-local sortType, sortDirection = "name", 1
+local sortType, sortDirection = "count", -1
 
 local function rebuildItems()
 	local tab, n = {}, 0
@@ -255,7 +257,7 @@ local function modal()
 				end
 				chosen = nil
 				return
-			elseif x >= 11 and x <= 18 then
+			elseif event[3] >= 11 and event[3] <= 18 then
 				chosen = nil
 				return
 			end
@@ -319,14 +321,13 @@ local function searchBar()
 		if event[1] == "char" then
 			search = string.sub(search, 1, pos)..event[2]..string.sub(search, pos + 1)
 			pos = pos + 1
-			redraw()
+			os.queueEvent("redraw")
 		elseif event[1] == "paste" then
 			search = string.sub(search, 1, pos)..event[2]..string.sub(search, pos + 1)
 			pos = pos + #event[2]
-			redraw()
+			os.queueEvent("redraw")
 		elseif event[1] == "key" then
 			if event[2] == keys.enter then
-				local chosen
 				if #selected > 0 then
 					chosen = selected
 				else
@@ -336,38 +337,42 @@ local function searchBar()
 			elseif event[2] == keys.left then
 				if pos > 0 then
 					pos = pos - 1
-					redraw()
+					os.queueEvent("redraw")
 				end
 			elseif event[2] == keys.right then
 				if pos < #search then
 					pos = pos + 1
-					redraw()
+					os.queueEvent("redraw")
 				end
 			elseif event[2] == keys.backspace then
 				if pos > 0 then
 					search = string.sub(search, 1, pos - 1)..string.sub(search, pos + 1)
 					pos = pos - 1
-					redraw()
+					os.queueEvent("redraw")
 				end
 			elseif event[2] == keys.home then
 				if pos > 0 then
 					pos = 0
-					redraw()
+					os.queueEvent("redraw")
 				end
 			elseif event[2] == keys.delete then
 				if pos < #search then
 					search = string.sub(search, 1, pos)..string.sub(search, pos + 2)
-					redraw()
+					os.queueEvent("redraw")
 				end
 			elseif event[2] == keys["end"] then
 				if pos < #search then
 					pos = #search
-					redraw()
+					os.queueEvent("redraw")
 				end
 			end
+		elseif event[1] == "mouse_click" and event[2] == 1 and event[3] == w + 2 and event[4] == 1 then
+			search = ""
+			pos = 0
+			os.queueEvent("redraw")
 		elseif event[1] == "term_resize" or event[1] == "window_resize" then
 			w = (term.getSize()) - 2
-			redraw()
+			os.queueEvent("redraw")
 		elseif event[1] == "redraw" then
 			redraw()
 		end
@@ -376,6 +381,7 @@ end
 
 local function list()
 	local scroll = 0
+	local w, h = term.getSize()
 
 	local function redraw()
 		term.clear()
@@ -395,10 +401,15 @@ local function list()
 				count = "|"..string.rep(" ", 8 - #count)..count
 				line = line..string.rep(" ", x - (#line + #count))..count
 			else
-				line = string.rep(" ", x)
+				line = string.rep(" ", x - 9).."|"..string.rep(" ", 8)
 			end
-			term.setBackgroundColor(i % 2 == 0 and colors.black or colors.gray)
-			term.setTextColor(colors.white)
+			if scroll + i == lineSelection then
+				term.setBackgroundColor(colors.blue)
+				term.setTextColor(colors.white)
+			else
+				term.setBackgroundColor(i % 2 == 0 and colors.black or colors.gray)
+				term.setTextColor(colors.white)
+			end
 			term.write(line)
 		end
 	end
@@ -438,7 +449,7 @@ local function list()
 				else
 					lineSelection = lineSelection + 1
 				end
-				if lineSelection - scroll > y / 2 and scroll + y < #sortedItems then
+				if lineSelection - scroll > h / 2 and scroll + h < #sortedItems then
 					scroll = scroll + 1
 				end
 			elseif event[2] == keys.up then
@@ -447,23 +458,19 @@ local function list()
 				elseif lineSelection == 1 then
 					lineSelection = -1
 				end
-				if lineSelection - scroll < y / 2 and scroll > 0 then
+				if lineSelection - scroll < h / 2 and scroll > 0 then
 					scroll = scroll - 1
 				end
 			elseif event[2] == keys.pageUp then
-				scrollUp(y - 1)
+				scrollUp(h - 1)
 			elseif event[2] == keys.pageDown then
-				scrollDown(y - 1)
+				scrollDown(h - 1)
 			end
 			if lineSelection > 0 then
 				selected = sortedItems[lineSelection].hash
 			else
 				selected = ""
 			end
-			rebuildItems()
-			redraw()
-		elseif event[1] == "char" then
-			rebuildItems()
 			redraw()
 		elseif event[1] == "mouse_click" then
 			if event[2] == 1 then
@@ -475,13 +482,13 @@ local function list()
 			elseif event[2] == 2 then
 				--right click, show context menu
 			end
+			os.queueEvent("redraw")
 		elseif event[1] == "mouse_scroll" then
 			if event[2] == -1 then
 				scrollUp(3)
 			elseif event[2] == 1 then
 				scrollDown(3)
 			end
-			rebuildItems()
 			redraw()
 		elseif event[1] == "redraw" then
 			rebuildItems()
@@ -490,40 +497,24 @@ local function list()
 	end
 end
 
-local itemRefreshTimer
-
 local function communicate()
 	while true do
 		local event = {base.handleEvents(os.pullEventRaw())}
 		if event[1] == "rednet_message" then
 			local message = event[3]
-			if event[4] == "lyq-base" and message.baseCode == config.baseCode then
-				if message.type == "master_online" then
-					--get list of all stored items
-					base.sendToBaseMaster({type = "all_items"}, "lyq-base-inv")
-
-				end
-			elseif event[4] == "lyq-base-inv" and message.baseCode == config.baseCode then
-				if message.type == "all_items_info" then
-					items = message.info
-					itemRefreshTimer = os.startTimer(3)
-					os.queueEvent("redraw")
-				end
-			elseif event[4] == "lyq-base-data" and message.baseCode == config.baseCode then
-				if message.type == "object_data_info" then
-					data = message.data.item
-					step = message.step
-				elseif message.type == "object_data_step" then
-					if message.step ~= step then
-						rednet.send(event[2], {type = "object_data", baseCode = config.baseCode}, "lyq-base-data")
-					end
-				end
+		elseif event[1] == "subscription_update" then
+			local channel, info = event[2], event[3]
+			if channel == "item" then
+				items = info
+				os.queueEvent("redraw")
+			elseif channel == "pretty" then
+				data = info
+				os.queueEvent("redraw")
 			end
 		elseif event[1] == "send_request" then
-			base.sendToBaseMaster({type = "object_required", object = {class = "item", hash = event[2], count = event[3]}, location = config.locations[1].location}, "lyq-base")
-		elseif event[1] == "timer" and event[2] == itemRefreshTimer then
-			base.sendToBaseMaster({type = "all_items"}, "lyq-base-inv")
-			itemRefreshTimer = os.startTimer(3)
+			if event[2] and event[3] then
+				base.sendToBaseMaster({type = "object_required", object = {class = "item", hash = event[2], count = event[3]}, location = config.locations[1].location}, "lyq-base")
+			end
 		elseif event[1] == "terminate" then
 			print("Stopping")
 			return

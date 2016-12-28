@@ -53,15 +53,11 @@ baseParameters = {
 	storage = storage,
 }
 
-local clientProtocol = {
-	protocol = "lyq-base",
-	name = {station_online = "Station"},
-	online = {station_online = true},
-	offline = {station_offline = true},
-	list = stations,
-}
+base.addClientConnection("Station", "lyq-base", "station_online", "station_offline")
+base.addClientConnection("subscriber", "lyq-base-data-item", "subscribe", "unsubscribe")
+base.addClientConnection("subscriber", "lyq-base-data-fluid", "subscribe", "unsubscribe")
+base.initialize(config.baseCode, nil, true)
 
-base.initialize(config.baseCode, nil, nil, clientProtocol, true)
 
 local function getDistance(a, b)
 	return math.sqrt((b.x - a.x)^2 + (b.y - a.y)^2 + (b.z - a.z)^2)
@@ -407,6 +403,29 @@ local function dispatchFlights()
 	end
 end
 
+local function updateData(_class)
+	for class, list in pairs(storage) do
+		if (_class and _class == class) or not class then
+			local result = {}
+			for i, names in pairs(list) do
+				if class == "item" then
+					for name, damages in pairs(names) do
+						if name ~= "empty" then
+							for damage, count in pairs(damages) do
+								if not result[name] then result[name] = {} end
+								if not result[name][damage] then result[name][damage] = 0 end
+								result[name][damage] = result[name][damage] + count
+							end
+						end
+					end
+					base.updateSubscribers("lyq-base-data-"..class, result)
+				end
+			end
+
+		end
+	end
+end
+
 tickTransport = os.startTimer(config.tick.transport)
 
 while true do
@@ -580,6 +599,7 @@ while true do
 		elseif event[4] == "lyq-base-inv" and message.baseCode == config.baseCode then
 			if message.type == "all_items_info" then
 				storage.item[event[2]] = message.info
+				updateData("item")
 			elseif message.type == "all_items" then
 				local result = {}
 				for i, names in pairs(storage.item) do
@@ -596,6 +616,14 @@ while true do
 				rednet.send(event[2], {type = "all_items_info", info = result, baseCode = config.baseCode}, "lyq-base-inv")
 			end
 		end
+	elseif event[1] == "station_online" then
+	elseif event[1] == "station_offline" then
+		for class, list in pairs(storage) do
+			if list[event[2]] then
+				list[event[2]] = nil
+			end
+		end
+		updateData()
 	elseif event[1] == "timer" then
 		if event[2] == tickTransport then
 			fulfillRequestsFromSurplus()

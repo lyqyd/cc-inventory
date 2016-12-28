@@ -11,8 +11,6 @@ local config = {
 	dispatchDelay = 0.8,
 }
 
-local slotMap = {5, 6, 7, 9, 10, 11, 13, 14, 15}
-
 if not os.loadAPI("base") then error("Could not load base API!") end
 if not os.loadAPI("flight") then error("Could not load flight API!") end
 if not os.loadAPI("configuration") then error("Could not load configuration API!") end

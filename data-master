@@ -42,19 +42,25 @@ end
 peripheral.find("modem", function(name) rednet.open(name) end)
 
 objects = data.load(config.databasePath)
-step = step + 1
+
+local clientProtocol = {
+	protocol = "lyq-base-info",
+	name = {station_online = "Station"},
+	online = {station_online = true},
+	offline = {station_offline = true},
+	list = stations,
+	subscriptions = {"pretty"},
+	subscriptionProtocol = "lyq-base-data",
+}
 
 base.initialize(config.baseCode)
+base.updateSubscribers("pretty", objects)
 
 while true do
 	local event = {base.handleEvents(os.pullEventRaw())}
 	if event[1] == "rednet_message" then
 		local message = event[3]
-		if event[4] == "lyq-base" and message.baseCode == config.baseCode then
-			if message.type == "master_online" then
-				rednet.broadcast({type = "object_data_step", step = step, baseCode = config.baseCode}, "lyq-base-data")
-			end
-		elseif event[4] == "lyq-base-data" and message.baseCode == config.baseCode then
+		if event[4] == "lyq-base-data" and message.baseCode == config.baseCode then
 			if message.type == "object_lookup" then
 				local object = base.fillObjectData(message.object)
 				if objects[object.class] and objects[object.class][object.hash] then
@@ -72,7 +78,11 @@ while true do
 					if objects[object.class].default then
 						for k, v in pairs(objects[object.class].default) do
 							local old = entry[k]
-							entry[k] = message.objects[k] or entry[k] or objects[object.class].default[k]
+							if k ~= "name" then
+								entry[k] = message.objects[k] or entry[k] or objects[object.class].default[k]
+							else
+								entry[k] = message.objects[k] or entry[k]
+							end
 							if entry[k] ~= old then changed = true end
 						end
 					else
@@ -85,8 +95,7 @@ while true do
 						local prefix = string.match(object.hash, "^([%a%d]+):")
 						if prefix then
 							data.save(config.databasePath, objects, object.class, prefix)
-							step = step + 1
-							rednet.broadcast({type = "object_data_step", step = step, baseCode = config.baseCode}, "lyq-base-data")
+							base.updateSubscribers("pretty", objects)
 						end
 					end
 				end

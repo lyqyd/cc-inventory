@@ -231,20 +231,6 @@ local function checkRemainingSpace()
 	itemsStored = 0
 end
 
-local clientProtocol = {
-	protocol = "lyq-inv",
-	name = {
-		construction_online = "Construction turtle",
-	},
-	online = {
-		construction_online = true,
-	},
-	offline = {
-		construction_offline = true,
-	},
-	list = clients,
-}
-
 local stationInfo = {
 	type = "items-inventory",
 	locations = {},
@@ -265,7 +251,12 @@ end
 
 base.addFlightBase(queues.retrieve)
 base.addFlightBase(queues.store)
-base.initialize(config.baseCode, stationInfo, nil, clientProtocol)
+base.addClientConnection("construction turtle", "lyq-inv", "construction_online", "construction_offline")
+base.initialize(config.baseCode, stationInfo)
+
+local function updateMaster()
+	base.sendToBaseMaster({type = "all_items_info", info = storage.getAllItemCounts()}, "lyq-base-inv")
+end
 
 while true do 
 	local event = {base.handleEvents(os.pullEventRaw())}
@@ -299,6 +290,7 @@ while true do
 				table.insert(queues.surplus[queueChoice], itemData)
 				print("Retrieving "..tostring(itemData.count).." of "..itemData.name.."-"..itemData.damage)
 				local success, count = storage.retrieve(itemData, function(route) queues.retrieve:add({route = route}) end)
+				updateMaster()
 				if not success then
 					print("Couldn't retrieve "..count.." items.")
 					local queueInfo = queues.surplus[queueChoice][#queues.surplus[queueChoice]]
@@ -336,6 +328,7 @@ while true do
 		if side == config.storageSide then
 			print("Storing "..tostring(count).." of "..name.."-"..damage)
 			storage.store({name = name, damage = damage, count = count}, function(route) queues.store:add({route = route}) end)
+			updateMaster()
 			itemsStored = itemsStored + 1
 			checkRemainingSpace()
 		elseif side == config.retrievalSide then
@@ -365,6 +358,7 @@ while true do
 			local side = counterLookup[side]
 			print("Storing "..tostring(count).." of "..name.."-"..damage)
 			storage.store({class = "item", name = name, damage = damage, count = count}, side, function(route) queues.intake[side]:add({route = route}) end)
+			updateMaster()
 			itemsStored = itemsStored + 1
 			checkRemainingSpace()
 			if #queues.request[side] > 0 then
