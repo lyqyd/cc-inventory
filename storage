@@ -285,20 +285,20 @@ local function moveToChest(start, chest, finish, action)
 	end
 	info = {row = {}, column = {}}
 	info.row.name, info.row.dist, info.column.name, info.column.dist = getRowAndColumn(start, chest)
-	if info.row.dist > 0 then
+	if info.column.dist > 0 then
 		n = n + 1
-		route[n] = info.row.name.." "..info.row.dist
+		route[n] = info.column.name.." "..info.column.dist
 	end
 	n = n + 1
-	route[n] = info.column.name.." "..info.column.dist
+	route[n] = info.row.name.." "..info.row.dist
 	n = n + 1
 	route[n] = action
 	info.row.name, info.row.dist, info.column.name, info.column.dist = getRowAndColumn(chest, finish)
 	n = n + 1
-	route[n] = info.column.name.." "..info.column.dist
-	if info.row.dist > 0 then
+	route[n] = info.row.name.." "..info.row.dist
+	if info.column.dist > 0 then
 		n = n + 1
-		route[n] = info.row.name.." "..info.row.dist
+		route[n] = info.column.name.." "..info.column.dist
 	end
 	return route
 end
