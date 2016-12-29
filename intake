@@ -38,7 +38,7 @@ local function surplus(i)
 	info = turtle.getItemDetail(i)
 	if info then
 		turtle.drop()
-		base.sendToBaseMaster({type = "object_surplus", object = {class = "item", name = info.name, damage = info.damage, count = info.count}, location = config.locations[1].location})
+		base.sendToServer({type = "object_surplus", object = {class = "item", name = info.name, damage = info.damage, count = info.count}, location = config.locations[1].location}, "lyq-base")
 	end
 end
 

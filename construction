@@ -136,15 +136,8 @@ local function constructEnv()
 	return env
 end
 
-local serviceProtocol = {
-	protocol = "lyq-inv",
-	name = "inventory",
-	online = "construction_online",
-	offline = "construction_offline",
-	master = master,
-}
-
-base.initialize(config.baseCode, nil, serviceProtocol, nil, true)
+base.initialize(config.baseCode, nil, true)
+base.addServerConnection("inventory", "lyq-inv", "construction_online", "construction_offline", master)
 
 if not config.initialized then
 	io.write("Initialization Mode\n")
@@ -180,7 +173,7 @@ if not config.initialized then
 		local storageBlock = details and (details.damage > 0 and details.name.."-"..details.damage or details.name)
 		setfenv(project.instructions, constructEnv())
 		local items = project.instructions()
-		base.sendToServiceMaster({type = "initialization", info = items}, "lyq-inv")
+		base.sendToServer({type = "initialization", info = items}, "lyq-inv")
 	end
 	config.initialized = true
 	configuration.save("construction.conf", config)
@@ -214,7 +207,7 @@ local function construct()
 							setfenv(project.instructions, constructEnv())
 							project.instructions()
 							--then tell master we did it:
-							base.sendToServiceMaster({type = "layer_complete", block = storageBlock}, "lyq-inv")
+							base.sendToServer({type = "layer_complete", block = storageBlock}, "lyq-inv")
 						else
 							--figure out what isn't ready and fix it.
 						end

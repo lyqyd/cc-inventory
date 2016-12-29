@@ -58,25 +58,19 @@ local function surplus(i)
 	info = turtle.getItemDetail(i)
 	if info then
 		turtle.drop()
-		base.sendToBaseMaster({type = "object_surplus", object = {class = "item", name = info.name, damage = info.damage, count = info.count}, location = config.locations[1].location})
+		base.sendToServer({type = "object_surplus", object = {class = "item", name = info.name, damage = info.damage, count = info.count}, location = config.locations[1].location}, "lyq-base")
 	end
 end
 
 peripheral.find("modem", function(name) rednet.open(name) end)
-
-local serviceProtocol = {
-	protocol = "lyq-base-craft",
-	name = "crafting",
-	online = "crafter_online",
-	offline = "crafter_offline",
-}
 
 local stationInfo = {
 	type = "items-crafter",
 	locations = config.locations,
 }
 
-base.initialize(config.baseCode, stationInfo, serviceProtocol)
+base.initialize(config.baseCode, stationInfo)
+base.addServerConnection("crafting", "lyq-base-craft", "crafter_online", "crafter_offline")
 
 local queue = flight.queue("back")
 base.addFlightBase(queue, config.locations[3].location)
@@ -111,7 +105,7 @@ local function craft()
 					end
 					for name, damages in pairs(items) do
 						for damage, count in pairs(damages) do
-							base.sendToBaseMaster({type = "object_required", objectType = "item", objectInfo = {name = name, damage = damage, count = count}, location = config.locations[2].location})
+							base.sendToServer({type = "object_required", objectType = "item", objectInfo = {name = name, damage = damage, count = count}, location = config.locations[2].location}, "lyq-base")
 						end
 					end
 				end
@@ -139,7 +133,7 @@ local function craft()
 						for j = 1, 9 do
 							surplus(slotMap[j])
 						end
-						base.sendToServiceMaster({type = "task_complete"})
+						base.sendToServer({type = "task_complete"}, "lyq-base-craft")
 					end
 				elseif item then
 					surplus(i)
