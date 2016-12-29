@@ -18,13 +18,6 @@ local comm = {
 		code = "",
 		name = "base",
 	},
-	sub = {
-		master = -1,
-		protocol = "",
-		online = "",
-		offline = "",
-		name = "",
-	},
 	servers = {
 		--[[
 		{
@@ -59,6 +52,8 @@ local comm = {
 		roles = {},
 		searches = {},
 		queries = {},
+		desired = {},
+		pending = {},
 		pendingRoles = {},
 		protocol = "lyq-base-conn",
 	},
@@ -76,22 +71,6 @@ expose = {comm = comm, flyQueues = flyQueues}
 
 local function areLocationsEqual(a, b)
 	return a.x == b.x and a.y == b.y and a.z == b.z
-end
-
-function getBaseMaster()
-	if comm.base.master > -1 then
-		return comm.base.master
-	else
-		return false
-	end
-end
-
-function getServiceMaster()
-	if comm.sub.master > -1 then
-		return comm.sub.master
-	else
-		return false
-	end
 end
 
 function getClientType(client)
@@ -120,22 +99,20 @@ function getClientByType(clientType)
 	end
 end
 
-function sendToBaseMaster(message, protocol)
-	local master = getBaseMaster()
-	if master then
-		message.baseCode = comm.base.code
-		rednet.send(master, message, protocol or comm.base.protocol)
-		return true
-	else
-		return false
+function getServer(protocol)
+	for i = 1, #comm.servers do
+		if comm.servers[i].protocol == protocol then
+			return comm.servers[i].id
+		end
 	end
+	return false
 end
 
-function sendToServiceMaster(message, protocol)
-	local master = getServiceMaster()
+function sendToServer(message, protocol)
+	local master = getServer(protocol)
 	if master then
 		message.baseCode = comm.base.code
-		rednet.send(master, message, protocol or comm.sub.protocol)
+		rednet.send(master, message, protocol)
 		return true
 	else
 		return false
@@ -155,6 +132,7 @@ local function createMissingConnections()
 			if not found then
 				table.insert(comm.connections.pendingRoles, {name = info.name, protocol = info.protocol, hosts = {}, responses = 0})
 				comm.connections.searches[os.startTimer(dnsTime)] = i
+				io.write("Searching for "..info.name.." master...\n")
 				rednet.broadcast({type = "lookup", protocol = info.protocol, baseCode = comm.base.code}, comm.dns.protocol)
 			end
 		end
@@ -270,6 +248,7 @@ function handleConnection(event)
 				comm.connections.clients[id] = {liveStatus = true}
 				rednet.send(id, {type = "connection_accept", baseCode = comm.base.code}, comm.connections.protocol)
 			elseif message.type == "connection_accept" and message.baseCode == comm.base.code then
+				io.write("Connection established to "..tostring(id)..".\n")
 				comm.connections.servers[id].state = "open"
 				keepAlive(comm.connections.keepAlive, id)
 				local remove = {}
@@ -278,7 +257,9 @@ function handleConnection(event)
 						if id == hostID then
 							for j, serverInfo in ipairs(comm.servers) do
 								if info.protocol == serverInfo.protocol then
+									serverInfo.id = id
 									clearTimers(comm.connections.queries, j)
+									io.write("Connecting to "..serverInfo.name.." master at "..tostring(id)..".\n")
 									rednet.send(id, {type = serverInfo.online, baseCode = comm.base.code}, serverInfo.protocol)
 									comm.connections.servers[id].roles[j] = true
 								end
@@ -355,14 +336,16 @@ function handleConnection(event)
 							comm.connections.pendingRoles[i] = nil
 						elseif #roleInfo.hosts == 1 then
 							local id = roleInfo.hosts[1]
-							if comm.connections.servers[id] and comm.connections.servers[id].state == "open" then
-								comm.connections.servers[id].roles[serverNum] = true
-								rednet.send(id, {type = info.online, baseCode = comm.base.code}, info.protocol)
+							if comm.connections.servers[id] then
+								if comm.connections.servers[id].state == "open" then
+									comm.connections.servers[id].roles[serverNum] = true
+									info.id = id
+									io.write("Opening "..info.protocol.." with "..tostring(id)..".\n")
+									rednet.send(id, {type = info.online, baseCode = comm.base.code}, info.protocol)
+								end
 							else
-								comm.connections.queries[os.startTimer(dnsTime)] = serverNum
-								info.id = id
-								rednet.send(info.id, {type = "connection_open", baseCode = comm.base.code}, comm.connections.protocol)
-								comm.connections.servers[id] = {state = "waiting", roles = {}}
+								comm.connections.servers[id] = {state = "desired", roles = {}}
+								os.queueEvent("connection_desired")
 							end
 						else
 							io.write("Too many "..roleInfo.name.." masters on network!\n")
@@ -385,6 +368,14 @@ function handleConnection(event)
 				end
 			end
 		end
+	elseif event[1] == "connection_desired" then
+		for id, info in pairs(comm.connections.servers) do
+			if info.state == "desired" then
+				io.write("Attempting to connect to "..tostring(id)..".\n")
+				rednet.send(id, {type = "connection_open", baseCode = comm.base.code}, comm.connections.protocol)
+				info.state = "waiting"
+			end
+		end
 	end
 	createMissingConnections()
 end
@@ -405,7 +396,7 @@ end
 
 local function handleFlightDispatching(event)
 	if event[1] == "rednet_message" and event[4] == comm.base.protocol and event[3].baseCode == comm.base.code then
-		if event[2] == comm.base.master then
+		if event[2] == getServer(comm.base.protocol) then
 			if event[3].type == "fly_route" then
 				for i, info in ipairs(flyQueues) do
 					if info.location and areLocationsEqual(info.location, event[3].location) then
@@ -414,9 +405,10 @@ local function handleFlightDispatching(event)
 					end
 				end
 			elseif event[3].type == "master_online" then
+				io.write("Sending flight base data.\n")
 				for i, info in ipairs(flyQueues) do
 					if info.location then
-						sendToBaseMaster({type = "flight_base_info", info = {count = peripheral.call(info.queue.side, "getQuadCount"), location = info.location}})
+						sendToServer({type = "flight_base_info", info = {count = peripheral.call(info.queue.side, "getQuadCount"), location = info.location}}, comm.base.protocol)
 					end
 				end
 			end
@@ -424,7 +416,7 @@ local function handleFlightDispatching(event)
 	elseif event[1] == "quad_landed" then
 		for i, info in ipairs(flyQueues) do
 			if event[2] == info.queue.side and info.location then
-				sendToBaseMaster({type = "flight_arrived", location = info.location})
+				sendToServer({type = "flight_arrived", location = info.location}, comm.base.protocol)
 				break
 			end
 		end
@@ -432,7 +424,7 @@ local function handleFlightDispatching(event)
 		for i, info in ipairs(flyQueues) do
 			local result = {info.queue:handleEvents(unpack(event))}
 			if result[1] == "route_depart" and info.location then
-				sendToBaseMaster({type = "flight_dispatched", result[3].id, result[3].location})
+				sendToServer({type = "flight_dispatched", result[3].id, result[3].location}, comm.base.protocol)
 			end
 		end
 	end
@@ -446,8 +438,12 @@ function handleEvents(...)
 			handleSubscriptions(event)
 		end
 	elseif event[1] == "terminate" then
-		if comm.base.master > -1 then rednet.send(comm.base.master, {type = comm.base.offline, baseCode = comm.base.code}, comm.base.protocol) end
-		if comm.sub.master > -1 then rednet.send(comm.sub.master, {type = comm.sub.offline, baseCode = comm.base.code}, comm.sub.protocol) end
+		for i = 1, #comm.servers do
+			local info = comm.servers[i]
+			if info.id > -1 then
+				rednet.send(info.id, {type = info.offline, baseCode = comm.base.code}, info.protocol)
+			end
+		end
 		if comm.clients.protocol then
 			rednet.unhost(comm.clients.protocol)
 			for i = 1, #comm.clients.list do
@@ -461,9 +457,9 @@ function handleEvents(...)
 	return unpack(event)
 end
 
-local function createServerEntry(name, protocol, online, offline)
+local function createServerEntry(name, protocol, online, offline, id)
 	io.write("Adding "..name.." server.\n")
-	table.insert(comm.servers, {name = name, online = online, offline = offline, protocol = protocol, id = -1})
+	table.insert(comm.servers, {name = name, online = online, offline = offline, protocol = protocol, id = id or -1})
 end
 
 local function createClientEntry(name, protocol, online, offline)
@@ -487,15 +483,14 @@ function initialize(baseCode, stationInfo, nobase)
 		comm.station.locations = stationInfo.locations
 	end
 	if not nobase then
-		io.write("Searching for base master...\n")
 		createServerEntry("base", comm.base.protocol, comm.base.online, comm.base.offline)
 	end
 	if #comm.clients > 0 then comm.connections.ping = os.startTimer(pingTime) end
 	createMissingConnections()
 end
 
-function addServerConnection(name, protocol, online, offline)
-	createServerEntry(name, protocol, online, offline)
+function addServerConnection(name, protocol, online, offline, id)
+	createServerEntry(name, protocol, online, offline, id)
 end
 
 function addClientConnection(name, protocol, online, offline)
