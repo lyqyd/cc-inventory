@@ -255,7 +255,10 @@ base.addClientConnection("construction turtle", "lyq-inv", "construction_online"
 base.initialize(config.baseCode, stationInfo)
 
 local function updateMaster()
-	base.sendToBaseMaster({type = "all_items_info", info = storage.getAllItemCounts()}, "lyq-base-inv")
+	local master = base.getServer("lyq-base")
+	if master then
+		rednet.send(master, {type = "all_items_info", info = storage.getAllItemCounts(), baseCode = config.baseCode}, "lyq-base-inv")
+	end
 end
 
 while true do 
@@ -313,7 +316,7 @@ while true do
 					end
 				end
 				table.insert(queues.request[queueChoice], itemData)
-				base.sendToBaseMaster({type = "object_required", object = itemData, location = config.locations[queueChoice][1].location, crafting = "none", baseCode = config.baseCode}, "lyq-base")
+				base.sendToServer({type = "object_required", object = itemData, location = config.locations[queueChoice][1].location, crafting = "none", baseCode = config.baseCode}, "lyq-base")
 			elseif message.type == "free_space" then
 				rednet.send(event[2], {type = "free_space_count", info = storage.getSpaceRemaining(), baseCode = config.baseCode}, "lyq-base-inv")
 			elseif message.type == "free_slots" then
@@ -346,7 +349,7 @@ while true do
 						queues.output[i]:add({route = route})
 						if info.count == 0 then
 							table.remove(queues.surplus[i], j)
-							base.sendToBaseMaster({type = "object_surplus", object = {class = "item", name = info.name, damage = info.damage, count = info.total}, location = config.locations[i][2].location})
+							base.sendToServer({type = "object_surplus", object = {class = "item", name = info.name, damage = info.damage, count = info.total}, location = config.locations[i][2].location}, "lyq-base")
 						end
 						if total == count then break end
 					end

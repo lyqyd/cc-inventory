@@ -513,7 +513,7 @@ local function communicate()
 			end
 		elseif event[1] == "send_request" then
 			if event[2] and event[3] then
-				base.sendToBaseMaster({type = "object_required", object = {class = "item", hash = event[2], count = event[3]}, location = config.locations[1].location}, "lyq-base")
+				base.sendToServer({type = "object_required", object = {class = "item", hash = event[2], count = event[3]}, location = config.locations[1].location}, "lyq-base")
 			end
 		elseif event[1] == "terminate" then
 			print("Stopping")
